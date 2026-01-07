@@ -25,8 +25,8 @@ public:
         _iface = iface;
         _spiface = spiface;
         if (static_cast<kintex7sdr_iface::rev_type>(_iface->get_rev()) != kintex7sdr_iface::USRP_N210_XK &&
-            static_cast<kintex7sdr_iface::rev_type>(_iface->get_rev()) != kintex7sdr_iface::USRP_N210_XA)
-            throw uhd::not_implemented_error("enable_dac_clock: unknown hardware version");
+            static_cast<kintex7sdr_iface::rev_type>(_iface->get_rev()) != kintex7sdr_iface::USRP_N210_XA);
+            //throw uhd::not_implemented_error("enable_dac_clock: unknown hardware version");
 
         clk_regs = kintex7sdr_clk_regs_t(static_cast<kintex7sdr_iface::rev_type>(_iface->get_rev()));
 
@@ -93,7 +93,8 @@ public:
                 this->write_reg(clk_regs.output(clk_regs.rx_db));
                 break;
             default:
-                throw uhd::not_implemented_error("enable_rx_dboard_clock: unknown hardware version");
+                break;
+                //throw uhd::not_implemented_error("enable_rx_dboard_clock: unknown hardware version");
         }
         this->update_regs();
     }
@@ -148,7 +149,8 @@ public:
                 _ad9516_regs.output_level_lvds_out7 = ad9516_regs_t::OUTPUT_LEVEL_LVDS_OUT7_3_5MA;
                 break;
             default:
-                throw uhd::not_implemented_error("enable_tx_dboard_clock: unknown hardware version");
+                break;
+                //throw uhd::not_implemented_error("enable_tx_dboard_clock: unknown hardware version");
         }
 
         this->write_reg(clk_regs.output(clk_regs.tx_db));
@@ -262,7 +264,8 @@ private:
                 _ad9516_regs.divider0_bypass = 1;
                 break;
             default:
-                throw uhd::not_implemented_error("enable_dac_clock: unknown hardware version");
+                break;
+                //throw uhd::not_implemented_error("enable_dac_clock: unknown hardware version");
         }
 
         this->write_reg(clk_regs.output(clk_regs.dac));

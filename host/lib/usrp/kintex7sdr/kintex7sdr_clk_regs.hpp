@@ -102,7 +102,8 @@ public:
                 pll_rdbck = 0x01F;
                 break;
             default:
-                throw uhd::not_implemented_error("kintex7sdr_clk_regs_t: unknown hardware version");
+                break;
+                //throw uhd::not_implemented_error("kintex7sdr_clk_regs_t: unknown hardware version");
         }
     }
 
@@ -113,7 +114,8 @@ public:
                 return clknum < 6 ? 0x0F0 + clknum : 0x140 + clknum - 6;
                 break;
             default:
-                throw uhd::not_implemented_error("output: unknown hardware version");
+                break;
+                //throw uhd::not_implemented_error("output: unknown hardware version");
         }
     }
 
@@ -124,7 +126,8 @@ public:
                 return clknum < 6 ? 0x190 + 3 * (int) (clknum / 2)
                                   : 0x199 + 5 * (int) ((clknum - 6) / 2);
             default:
-                throw uhd::not_implemented_error("div_lo: unknown hardware version");
+                break;
+                //throw uhd::not_implemented_error("div_lo: unknown hardware version");
         }
     }
 
@@ -135,7 +138,8 @@ public:
                 return clknum < 6 ? 0x191 + 3 * (int) (clknum / 2)
                                   : 0x19A + 5 * (int) ((clknum - 6) / 2);
             default:
-                throw uhd::not_implemented_error("div_lo: unknown hardware version");
+                break;
+                //throw uhd::not_implemented_error("div_lo: unknown hardware version");
         }
     }
 

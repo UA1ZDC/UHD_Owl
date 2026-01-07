@@ -3,3 +3,6 @@ debian
 *swp
 *.pyc
 .DS_Store
+*.project
+*.cproject
+.idea

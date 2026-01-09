@@ -1,106 +1,52 @@
-#ifndef UHD_USRP_DBOARD_DB_KINTEX7SDR_RX_HPP
-#define UHD_USRP_DBOARD_DB_KINTEX7SDR_RX_HPP
-
-#include <uhd/usrp/dboard_base.hpp>
-#include <uhd/types/direction.hpp>
-#include <uhd/utils/log.hpp>
+#ifndef UHD_USRP_DBOARD_DB_KINTEX7SDR_CPLD_REGMAP_HPP
+#define UHD_USRP_DBOARD_DB_KINTEX7SDR_CPLD_REGMAP_HPP
 
 #include <cstdint>
-#include <map>
-#include <mutex>
-#include <type_traits>
-#include <utility>
 
-#include "cpld_regmap.hpp"
-#include "ltc5594_regmap.hpp"
-#include "ltc6948_regmap.hpp"
+namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr { namespace cpld {
 
-namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
-
-// ===== ID платы =====
-// Чтобы у тебя СЕЙЧАС собралось — дефолт 0xFFFF (потом поменяешь на реальный RX EEPROM ID).
-static constexpr uint16_t DB_KINTEX7SDR_RX_ID      = 0xFFFF;
-static constexpr uint16_t DB_KINTEX7SDR_TX_ID_NONE = 0xFFFF;
-
-// ===== SPI routing через GPIO[2:0] (SPI_ADDR) =====
-// ВНИМАНИЕ: значения должны совпадать с декодером в CPLD.
+/***********************************************************************
+ * SPI routing destinations (GPIO[SPI_ADDR] = 3 бита)
+ * Должно совпадать с CPLD-логикой:
+ *   CPLD_DEST = 0  -> доступ к регистрам CPLD
+ *   остальные -> pass-through на внешние SPI-микросхемы
+ **********************************************************************/
 enum spi_dest_t : uint8_t {
-    SPI_DEST_CPLD     = 0x0,
-    SPI_DEST_LTC5594  = 0x1,
-    SPI_DEST_LTC6948  = 0x2,
-    SPI_DEST_AD7922   = 0x3,
-    SPI_DEST_ATT2     = 0x4,
-    SPI_DEST_NONE     = 0x7, // безопасное “никого не выбрали”
+    SPI_DEST_CPLD    = 0x0,
+    SPI_DEST_LTC5594 = 0x1,
+    SPI_DEST_LTC6948 = 0x2,
+    // 0x3..0x7 reserved
 };
 
-// ===== GPIO fields (то, что реально у тебя заведено как FPGA_OUT на UNIT_RX) =====
-enum class gpio_field_id : uint8_t {
-    SPI_ADDR,
-    CPLD_RST_N,
+/***********************************************************************
+ * CPLD register map (если у тебя адреса другие — поменяй здесь,
+ * но ДРАЙВЕР от этого собираться не перестанет).
+ **********************************************************************/
+enum reg_t : uint8_t {
+    REG_ID         = 0x00, // read-only: версия/ID (если реализовано)
+    REG_CTRL       = 0x01, // control bits
+    REG_ATT2_CODE  = 0x02, // 7-bit code в младших битах
+    REG_ATT2_MODE  = 0x03, // mode: auto-latch / direct / etc
+    REG_STATUS     = 0x04  // sticky flags / status
 };
 
-struct gpio_field_info {
-    gpio_field_id         id;
-    dboard_iface::unit_t   unit;
-    uint32_t               shift;
-    uint32_t               mask;
-    uint32_t               width;
-    bool                   is_output;
-};
-
-class db_kintex7sdr_rx : public rx_dboard_base
+// Упаковка 32-битного слова под наш CPLD SPI engine: [CMD][DATA24]
+// CMD: bit7 = 1 write / 0 read, bits[6:0] = reg
+static inline uint32_t make_cmd(const bool is_write, const uint8_t reg7)
 {
-public:
-    explicit db_kintex7sdr_rx(ctor_args_t args);
-    ~db_kintex7sdr_rx() override = default;
+    return (uint32_t(is_write) << 7) | (reg7 & 0x7F);
+}
 
-private:
-    dboard_iface::sptr _iface;
-    std::map<gpio_field_id, gpio_field_info> _gpio;
-    std::mutex _spi_mutex;
+static inline uint32_t make_frame_wr(const uint8_t reg7, const uint32_t data24)
+{
+    return (make_cmd(true, reg7) << 24) | (data24 & 0x00FFFFFFu);
+}
 
-    // ---- GPIO helpers ----
-    void _init_gpio();
-    void _write_gpio_field(gpio_field_id id, uint32_t value);
-    void _set_spi_route(spi_dest_t dest);
+static inline uint32_t make_frame_rd(const uint8_t reg7)
+{
+    return (make_cmd(false, reg7) << 24);
+}
 
-    // ---- SPI helpers ----
-    void _spi_write(uint32_t v, uint8_t nbits);
+}}}}} // namespace uhd::usrp::dboard::db_kintex7sdr::cpld
 
-    // read_write_spi() есть НЕ во всех UHD — делаем мягкую компиляцию:
-    template <typename IFACE>
-    static auto _rw_spi(IFACE& iface,
-                        dboard_iface::unit_t unit,
-                        spi_config_t::spi_edge_t edge,
-                        uint32_t v,
-                        uint8_t nbits,
-                        int)
-        -> decltype(iface.read_write_spi(unit, edge, v, nbits))
-    {
-        return iface.read_write_spi(unit, edge, v, nbits);
-    }
-
-    template <typename IFACE>
-    static uint32_t _rw_spi(IFACE& iface,
-                            dboard_iface::unit_t unit,
-                            spi_config_t::spi_edge_t edge,
-                            uint32_t v,
-                            uint8_t nbits,
-                            long)
-    {
-        // fallback: только write
-        iface.write_spi(unit, edge, v, nbits);
-        return 0;
-    }
-
-    uint32_t _spi_readwrite(uint32_t v, uint8_t nbits);
-
-    // ---- LTC5594 ----
-    void _ltc5594_write_reg(uint8_t addr, uint8_t data);
-    uint8_t _ltc5594_read_reg(uint8_t addr);
-    void _log_ltc5594_chip_id();
-};
-
-}}}} // namespace uhd::usrp::dboard::db_kintex7sdr
-
-#endif // UHD_USRP_DBOARD_DB_KINTEX7SDR_RX_HPP
+#endif // UHD_USRP_DBOARD_DB_KINTEX7SDR_CPLD_REGMAP_HPP

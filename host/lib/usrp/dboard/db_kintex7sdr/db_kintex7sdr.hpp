@@ -1,100 +1,102 @@
-// ==============================
-// File: db_kintex7sdr_rx.hpp
-// ==============================
-#ifndef DB_KINTEX7SDR_RX_HPP
-#define DB_KINTEX7SDR_RX_HPP
+#ifndef UHD_USRP_DBOARD_DB_KINTEX7SDR_HPP
+#define UHD_USRP_DBOARD_DB_KINTEX7SDR_HPP
 
+#include "db_kintex7sdr_ids.hpp"
 #include "cpld_regmap.hpp"
 #include "ltc5594_regmap.hpp"
 #include "ltc6948_regmap.hpp"
 
+#include <uhd/usrp/dboard_base.hpp>
+#include <uhd/usrp/dboard_iface.hpp>
 #include <uhd/types/ranges.hpp>
 #include <uhd/types/sensors.hpp>
-#include <uhd/usrp/dboard_base.hpp>
+#include <uhd/types/serial.hpp>
+#include <uhd/utils/log.hpp>
+#include <uhd/utils/safe_call.hpp>
 
 #include <cstdint>
+#include <map>
 #include <mutex>
+#include <string>
 
 namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
 
-class db_kintex7sdr_rx : public rx_dboard_base
+class db_kintex7sdr_rx : public uhd::usrp::rx_dboard_base
 {
 public:
-    explicit db_kintex7sdr_rx(dboard_iface::sptr iface);
-    ~db_kintex7sdr_rx() override = default;
+    explicit db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args);
+    ~db_kintex7sdr_rx(void) override;
+
+    // Заглушки обязательных API-методов (расширишь по мере готовности)
+    double set_rx_frequency(double freq);
+    double set_rx_gain(double gain);
+
+    // helper: чтение CHIPID LTC5594 и лог в UHD
+    void log_ltc5594_chip_id();
 
 private:
-    // 3-bit SPI_ADDR routes (GPIO[2:0]); must match CPLD logic: CPLD_DEST == 0.
-    enum class spi_dest_t : uint8_t {
-        CPLD     = 0x0,
-        LTC5594  = 0x1,
-        LTC6948  = 0x2,
-        RESERVED3 = 0x3,
-        RESERVED4 = 0x4,
-        RESERVED5 = 0x5,
-        RESERVED6 = 0x6,
-        RESERVED7 = 0x7,
-    };
-
-    enum class gpio_field_id : uint8_t {
-        SPI_ADDR,
-        CPLD_RST_N,
+    // GPIO fields (минимум нужного сейчас)
+    enum gpio_field_id : uint8_t {
+        GPIO_SPI_ADDR   = 0,
+        GPIO_CPLD_RST_N = 1,
+        // при необходимости добавишь тут LOCKED/EN/etc
     };
 
     struct gpio_field_info {
         gpio_field_id id;
-        dboard_iface::unit_t unit;
-        uint8_t offset;
+        uhd::usrp::dboard_iface::unit_t unit;
+        uint32_t offset;
         uint32_t mask;
-        uint8_t width;
-        bool ddr_one_means_output_to_db; // true for controllable signals (input to DB from FPGA)
+        uint8_t  width;
+        bool     fpga_drives; // true => это “INPUT to dboard” (FPGA->плата)
     };
 
-    struct gpio_reg_state {
-        uint32_t out = 0;
-        uint32_t ddr = 0;
+    struct gpio_reg_cache {
+        bool dirty;
+        uint32_t value;
+        uint32_t mask;
+        uint32_t ddr;
     };
 
-    void _init_gpio();
-    void _write_gpio();
-    void _set_gpio_field(gpio_field_id id, uint32_t value);
+    // GPIO helpers
+    void _init_gpio_map();
+    void _set_gpio_field(gpio_field_id id, uint32_t v);
+    uint32_t _get_gpio_field(gpio_field_id id);
+    void _flush_gpio();
 
-    void _route_spi(spi_dest_t dest);
+    // SPI helpers
+    void _route_spi(cpld::spi_dest_t dest);
 
-    void _spi_write(uint32_t v, uint8_t nbits);
-    uint32_t _spi_xfer(uint32_t v, uint8_t nbits);
+    template<typename IFACE>
+    static auto _has_readwrite(int) -> decltype(
+        std::declval<IFACE&>().read_write_spi(
+            std::declval<uhd::usrp::dboard_iface::unit_t>(),
+            std::declval<const uhd::spi_config_t&>(),
+            uint32_t{}, size_t{}),
+        std::true_type{});
 
-    // High-level controls
-    double _set_rx_freq(double freq_hz);
-    double _set_rx_gain(double att_db);
+    template<typename IFACE>
+    static std::false_type _has_readwrite(...);
 
-    uhd::sensor_value_t _get_lo_locked();
+    uint32_t _spi_xfer(uint32_t word, size_t nbits);
 
-    void _cpld_reset_pulse();
-    void _cpld_apply_ctrl0(uint32_t ctrl0);
-    void _set_att1_code(uint8_t code2b);
-    void _set_att2_code(uint8_t code7b);
+    // Chip-level xfers
+    void    _cpld_wr(uint8_t reg7, uint32_t data24);
+    uint16_t _ltc5594_xfer16(uint16_t w);
+    uint16_t _ltc6948_xfer16(uint16_t w);
 
 private:
-    dboard_iface::sptr _iface;
+    uhd::usrp::dboard_iface::sptr _iface;
+    uhd::spi_config_t _spi_cfg;
+
     std::mutex _spi_mutex;
+    std::map<gpio_field_id, gpio_field_info> _gpio_map;
 
-    gpio_reg_state _gpio;
-    spi_dest_t _cur_dest = spi_dest_t::CPLD;
-
-    // Shadowed CTRL0 to do clean RMW
-    uint32_t _ctrl0_shadow = 0;
-
-    // Regmap helpers (callbacks route + xfer)
-    cpld::cpld_iface _cpld;
-    ltc5594::ltc5594_iface _ltc5594;
-    ltc6948::ltc6948_iface _ltc6948;
-
-    // Ranges
-    uhd::meta_range_t _rx_freq_range;
-    uhd::meta_range_t _rx_gain_range;
+    gpio_reg_cache _rx_gpio;
+    double _rx_freq;
+    double _rx_gain;
 };
 
 }}}} // namespace uhd::usrp::dboard::db_kintex7sdr
 
-#endif // DB_KINTEX7SDR_RX_HPP
+#endif // UHD_USRP_DBOARD_DB_KINTEX7SDR_HPP

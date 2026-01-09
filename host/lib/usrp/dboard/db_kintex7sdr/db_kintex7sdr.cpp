@@ -1,137 +1,215 @@
-#include "db_kintex7sdr_rx.hpp"
+#include "db_kintex7sdr.hpp"
 
 #include <uhd/usrp/dboard_manager.hpp>
 #include <uhd/utils/static.hpp>
-#include <boost/format.hpp>
 
-#include <vector>
+#include <chrono>
+#include <thread>
+#include <type_traits>
 
 namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
 
-// ===== GPIO map (UNIT_RX) =====
-static const gpio_field_info gpio_info[] = {
-    // id                      unit                 shift mask          width out
-    {gpio_field_id::SPI_ADDR,  dboard_iface::UNIT_RX, 0,    (0x7u << 0), 3,    true},
-    {gpio_field_id::CPLD_RST_N,dboard_iface::UNIT_RX, 3,    (0x1u << 3), 1,    true},
-};
-
-db_kintex7sdr_rx::db_kintex7sdr_rx(ctor_args_t args)
-    : rx_dboard_base(args)
+db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
+    : uhd::usrp::rx_dboard_base(args)
+    , _iface(get_iface())
+    , _spi_cfg(uhd::spi_config_t::EDGE_RISE)
+    , _rx_gpio{false, 0, 0, 0}
+    , _rx_freq(0.0)
+    , _rx_gain(0.0)
 {
-    _iface = get_iface(); // ВАЖНО: ctor_args_t у тебя = void*, iface берём через базовый класс.
+    _init_gpio_map();
 
-    _init_gpio();
+    // Настраиваем DDR: 1 = FPGA drives pin (input to dboard)
+    _iface->set_gpio_ddr(uhd::usrp::dboard_iface::UNIT_RX, _rx_gpio.ddr);
 
-    // безопасно: никого не выбираем
-    _set_spi_route(SPI_DEST_NONE);
+    // Дефолты
+    _set_gpio_field(GPIO_SPI_ADDR, 0);
+    _set_gpio_field(GPIO_CPLD_RST_N, 0);
+    _flush_gpio();
 
-    // выводим CPLD из reset (если активный 0)
-    _write_gpio_field(gpio_field_id::CPLD_RST_N, 1);
+    // Держим CPLD в reset
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    _set_gpio_field(GPIO_CPLD_RST_N, 1);
+    _flush_gpio();
 
-    // читаем/логируем CHIPID LTC5594
-    _log_ltc5594_chip_id();
+    // Пример: прочитать ID LTC5594 (если SDO подключён и read_write_spi есть)
+    log_ltc5594_chip_id();
 }
 
-void db_kintex7sdr_rx::_init_gpio()
+db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
 {
-    _gpio.clear();
-    for (const auto& f : gpio_info) {
-        _gpio.emplace(f.id, f);
+    UHD_SAFE_CALL(
+        // Вернуть SPI_ADDR в “ничего не выбрано” (если нужно)
+        _set_gpio_field(GPIO_SPI_ADDR, 0);
+        _set_gpio_field(GPIO_CPLD_RST_N, 0);
+        _flush_gpio();
+    )
+}
 
-        // DDR: выставляем как output только нужные биты
-        if (f.is_output) {
-            // set_gpio_ddr(unit, value, mask)
-            _iface->set_gpio_ddr(f.unit, f.mask, f.mask);
+void db_kintex7sdr_rx::_init_gpio_map()
+{
+    // Минимальная карта под твой текущий UNIT_RX
+    const gpio_field_info fields[] = {
+        {GPIO_SPI_ADDR,   uhd::usrp::dboard_iface::UNIT_RX, 0, 0x7u << 0, 3, true},
+        {GPIO_CPLD_RST_N, uhd::usrp::dboard_iface::UNIT_RX, 3, 0x1u << 3, 1, true},
+    };
+
+    for (const auto& f : fields) {
+        _gpio_map[f.id] = f;
+        if (f.fpga_drives) {
+            _rx_gpio.ddr |= f.mask;
         }
     }
 }
 
-void db_kintex7sdr_rx::_write_gpio_field(gpio_field_id id, uint32_t value)
+void db_kintex7sdr_rx::_set_gpio_field(gpio_field_id id, uint32_t v)
 {
-    const auto it = _gpio.find(id);
-    if (it == _gpio.end()) {
-        UHD_LOG_ERROR("DB_KINTEX7SDR_RX", "GPIO field not found");
-        return;
-    }
+    auto it = _gpio_map.find(id);
+    if (it == _gpio_map.end()) return;
+
     const auto& f = it->second;
+    uint32_t newv = _rx_gpio.value;
+    newv &= ~f.mask;
+    newv |= (v << f.offset) & f.mask;
 
-    const uint32_t v = (value << f.shift) & f.mask;
-    _iface->write_gpio(f.unit, v, f.mask);
+    if (newv != _rx_gpio.value) {
+        _rx_gpio.value = newv;
+        _rx_gpio.mask |= f.mask;
+        _rx_gpio.dirty = true;
+    }
 }
 
-void db_kintex7sdr_rx::_set_spi_route(spi_dest_t dest)
+uint32_t db_kintex7sdr_rx::_get_gpio_field(gpio_field_id id)
 {
-    _write_gpio_field(gpio_field_id::SPI_ADDR, static_cast<uint32_t>(dest));
+    auto it = _gpio_map.find(id);
+    if (it == _gpio_map.end()) return 0;
+
+    const auto& f = it->second;
+    // Если FPGA drives — читаем из кеша
+    if (f.fpga_drives) {
+        return (_rx_gpio.value & f.mask) >> f.offset;
+    }
+
+    // Иначе читаем реально
+    uint32_t v = _iface->read_gpio(f.unit);
+    return (v & f.mask) >> f.offset;
 }
 
-void db_kintex7sdr_rx::_spi_write(uint32_t v, uint8_t nbits)
+void db_kintex7sdr_rx::_flush_gpio()
 {
-    _iface->write_spi(dboard_iface::UNIT_RX, spi_config_t::EDGE_RISE, v, nbits);
+    if (_rx_gpio.dirty) {
+        _iface->set_gpio_out(uhd::usrp::dboard_iface::UNIT_RX, _rx_gpio.value, _rx_gpio.mask);
+        _rx_gpio.dirty = false;
+        _rx_gpio.mask  = 0;
+    }
 }
 
-uint32_t db_kintex7sdr_rx::_spi_readwrite(uint32_t v, uint8_t nbits)
+void db_kintex7sdr_rx::_route_spi(cpld::spi_dest_t dest)
 {
-    // Пытаемся read_write_spi(), если его нет в твоей UHD — будет fallback на write-only.
-    return _rw_spi(*_iface, dboard_iface::UNIT_RX, spi_config_t::EDGE_RISE, v, nbits, 0);
+    _set_gpio_field(GPIO_SPI_ADDR, uint32_t(dest));
+    _flush_gpio();
 }
 
-// ===== LTC5594 low-level =====
-void db_kintex7sdr_rx::_ltc5594_write_reg(uint8_t addr, uint8_t data)
+template<typename IFACE>
+auto db_kintex7sdr_rx::_has_readwrite(int) -> decltype(
+    std::declval<IFACE&>().read_write_spi(
+        std::declval<uhd::usrp::dboard_iface::unit_t>(),
+        std::declval<const uhd::spi_config_t&>(),
+        uint32_t{}, size_t{}),
+    std::true_type{})
+{
+    return {};
+}
+
+template<typename IFACE>
+std::false_type db_kintex7sdr_rx::_has_readwrite(...)
+{
+    return {};
+}
+
+uint32_t db_kintex7sdr_rx::_spi_xfer(uint32_t word, size_t nbits)
 {
     std::lock_guard<std::mutex> lock(_spi_mutex);
-    _set_spi_route(SPI_DEST_LTC5594);
-    _spi_write(ltc5594::make_write_frame(addr, data), 16);
-    _set_spi_route(SPI_DEST_NONE);
+
+    // Если есть read_write_spi — используем (нужен для чтения ID и т.п.)
+    if (decltype(_has_readwrite<uhd::usrp::dboard_iface>(0))::value) {
+        return _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
+    }
+
+    // Иначе только write (чтение вернём 0, но сборка проходит)
+    _iface->write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
+    return 0;
 }
 
-uint8_t db_kintex7sdr_rx::_ltc5594_read_reg(uint8_t addr)
+void db_kintex7sdr_rx::_cpld_wr(uint8_t reg7, uint32_t data24)
 {
-    std::lock_guard<std::mutex> lock(_spi_mutex);
-    _set_spi_route(SPI_DEST_LTC5594);
-    const uint32_t resp = _spi_readwrite(ltc5594::make_read_frame(addr), 16);
-    _set_spi_route(SPI_DEST_NONE);
-    return static_cast<uint8_t>(resp & 0xFFu);
+    _route_spi(cpld::SPI_DEST_CPLD);
+    _spi_xfer(cpld::make_frame_wr(reg7, data24), 32);
 }
 
-void db_kintex7sdr_rx::_log_ltc5594_chip_id()
+uint16_t db_kintex7sdr_rx::_ltc5594_xfer16(uint16_t w)
 {
-    const uint8_t reg = _ltc5594_read_reg(ltc5594::REG_CHIPID);
-    const uint8_t chipid = (reg >> 6) & 0x03; // CHIPID[1:0] — верхние биты (по карте регистра)
-
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
-                 (boost::format("LTC5594 reg 0x%02X = 0x%02X, CHIPID=0x%X")
-                  % unsigned(ltc5594::REG_CHIPID)
-                  % unsigned(reg)
-                  % unsigned(chipid))
-                     .str());
+    _route_spi(cpld::SPI_DEST_LTC5594);
+    return uint16_t(_spi_xfer(uint32_t(w), 16) & 0xFFFFu);
 }
 
-// ===== Factory + registration =====
-static dboard_base::sptr make_db_kintex7sdr_rx(dboard_base::ctor_args_t args)
+uint16_t db_kintex7sdr_rx::_ltc6948_xfer16(uint16_t w)
 {
-    return dboard_base::sptr(new db_kintex7sdr_rx(args));
+    _route_spi(cpld::SPI_DEST_LTC6948);
+    return uint16_t(_spi_xfer(uint32_t(w), 16) & 0xFFFFu);
 }
 
-// SFINAE: если в твоём UHD есть перегрузка register_dboard(id, ctor, name) — используем её.
-// иначе падаем обратно на (rx_id, tx_id, ctor, name)
-static auto _register_one_id(int) -> decltype(
-    dboard_manager::register_dboard(DB_KINTEX7SDR_RX_ID, &make_db_kintex7sdr_rx, "db_kintex7sdr_rx"),
+void db_kintex7sdr_rx::log_ltc5594_chip_id()
+{
+    const uint16_t rx = _ltc5594_xfer16(ltc5594::make_word_rd(ltc5594::REG_CHIPID));
+    const uint8_t chipid = ltc5594::rx_data_byte(rx);
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", "LTC5594 CHIPID = 0x" + std::to_string(unsigned(chipid)));
+}
+
+double db_kintex7sdr_rx::set_rx_frequency(double freq)
+{
+    // TODO: будет через LTC6948-1 (300..2200 MHz, step 1 MHz)
+    _rx_freq = freq;
+    return _rx_freq;
+}
+
+double db_kintex7sdr_rx::set_rx_gain(double gain)
+{
+    // TODO: учесть два аттенюатора (ATT1 + ATT2)
+    _rx_gain = gain;
+    return _rx_gain;
+}
+
+/***********************************************************************
+ * Registration
+ * Предпочитаем overload “только RX id”, если он есть в твоём UHD.
+ * Иначе используем пару (rx_id, tx_none).
+ **********************************************************************/
+static uhd::usrp::dboard_base::sptr make_db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
+{
+    return uhd::usrp::dboard_base::sptr(new db_kintex7sdr_rx(args));
+}
+
+template <typename MGR>
+static auto _register_db(int) -> decltype(
+    MGR::register_dboard(DB_KINTEX7SDR_RX_ID, &make_db_kintex7sdr_rx, "db_kintex7sdr_rx"),
     void())
 {
-    dboard_manager::register_dboard(DB_KINTEX7SDR_RX_ID, &make_db_kintex7sdr_rx, "db_kintex7sdr_rx");
+    MGR::register_dboard(DB_KINTEX7SDR_RX_ID, &make_db_kintex7sdr_rx, "db_kintex7sdr_rx");
 }
 
-static void _register_one_id(long)
+template <typename MGR>
+static auto _register_db(long) -> decltype(
+    MGR::register_dboard(DB_KINTEX7SDR_RX_ID, DB_KINTEX7SDR_TX_ID_NONE, &make_db_kintex7sdr_rx, "db_kintex7sdr_rx"),
+    void())
 {
-    dboard_manager::register_dboard(DB_KINTEX7SDR_RX_ID,
-                                    DB_KINTEX7SDR_TX_ID_NONE,
-                                    &make_db_kintex7sdr_rx,
-                                    "db_kintex7sdr_rx");
+    MGR::register_dboard(DB_KINTEX7SDR_RX_ID, DB_KINTEX7SDR_TX_ID_NONE, &make_db_kintex7sdr_rx, "db_kintex7sdr_rx");
 }
 
 UHD_STATIC_BLOCK(register_db_kintex7sdr_rx)
 {
-    _register_one_id(0);
+    // попробуем 1-id overload, если нет — упадём на 2-id
+    _register_db<uhd::usrp::dboard_manager>(0);
 }
 
 }}}} // namespace uhd::usrp::dboard::db_kintex7sdr

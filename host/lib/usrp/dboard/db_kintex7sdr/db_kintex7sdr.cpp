@@ -3,6 +3,7 @@
 #include <uhd/usrp/dboard_manager.hpp>
 #include <uhd/utils/static.hpp>
 
+#include <array>
 #include <chrono>
 #include <functional>
 #include <iomanip>
@@ -20,6 +21,15 @@ static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 31.5, 0.5);
 // На большинстве dboard-дизайнов "ничего не выбрано" для 3-битного SPI_ADDR = 0b111.
 // Если в твоём CPLD другое соглашение — поменяй здесь.
 static const uint32_t SPI_DEST_NONE_3B = 0x7u;
+
+static const std::array<db_kintex7sdr_rx::gain_profile, 6> KINTEX7SDR_GAIN_TABLE{{
+    {0.0,  0b00, 0x00},
+    {6.0,  0b01, 0x10},
+    {12.0, 0b10, 0x20},
+    {18.0, 0b11, 0x30},
+    {24.0, 0b11, 0x40},
+    {30.0, 0b11, 0x50},
+}};
 
 // ============================================================================
 // db_kintex7sdr_rx
@@ -234,7 +244,32 @@ uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nb
 
 void db_kintex7sdr_rx::_cpld_wr(uint8_t reg7, uint32_t data24)
 {
-    (void)_spi_xfer_to(uint32_t(cpld::SPI_DEST_CPLD), cpld::make_frame_wr(reg7, data24), 32);
+    const uint32_t data = data24 & 0x00FFFFFFu;
+    std::lock_guard<std::mutex> lock(_cpld_mutex);
+    auto& entry = _cpld_cache[reg7];
+    if (entry.valid && entry.value == data) {
+        return;
+    }
+
+    (void)_spi_xfer_to(uint32_t(cpld::SPI_DEST_CPLD), cpld::make_frame_wr(reg7, data), 32);
+    entry.value = data;
+    entry.valid = true;
+}
+
+void db_kintex7sdr_rx::_cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t value)
+{
+    uint32_t base = 0;
+    {
+        std::lock_guard<std::mutex> lock(_cpld_mutex);
+        auto it = _cpld_cache.find(reg7);
+        if (it != _cpld_cache.end() && it->second.valid) {
+            base = it->second.value;
+        }
+    }
+
+    // Если кэш пустой, считаем базовое значение 0 и пишем только mask-биты.
+    const uint32_t next = (base & ~mask) | (value & mask);
+    _cpld_wr(reg7, next);
 }
 
 uint16_t db_kintex7sdr_rx::_ltc5594_xfer16(uint16_t w)
@@ -277,9 +312,28 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
 
 double db_kintex7sdr_rx::set_rx_gain(double gain)
 {
-    // TODO:
-    //  - перевести gain (dB) в коды аттенюаторов/усилителей
-    //  - записать CPLD регистры или GPIO
+    // ВНИМАНИЕ: соответствие битов REG_CTRL и карт усиления должно
+    // совпадать с regmap_core в CPLD.
+    gain = KINTEX7SDR_RX_GAIN_RANGE.clip(gain);
+
+    const gain_profile* profile = &KINTEX7SDR_GAIN_TABLE.front();
+    for (const auto& entry : KINTEX7SDR_GAIN_TABLE) {
+        if (gain >= entry.gain_db) {
+            profile = &entry;
+        }
+    }
+
+    uint32_t att1_value = 0;
+    if (profile->att1_code & 0x2) {
+        att1_value |= cpld::CTRL_ATT1_C1;
+    }
+    if (profile->att1_code & 0x1) {
+        att1_value |= cpld::CTRL_ATT1_C2;
+    }
+
+    _cpld_update_bits(cpld::REG_CTRL, cpld::CTRL_ATT1_MASK, att1_value);
+    _cpld_wr(cpld::REG_ATT2_CODE, profile->att2_code);
+
     _rx_gain = gain;
     return _rx_gain;
 }

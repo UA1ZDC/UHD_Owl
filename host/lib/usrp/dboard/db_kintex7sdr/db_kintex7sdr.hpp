@@ -60,6 +60,17 @@ private:
         uint32_t ddr;
     };
 
+    struct cpld_cache_entry {
+        uint32_t value;
+        bool valid;
+    };
+
+    struct gain_profile {
+        double gain_db;
+        uint8_t att1_code;
+        uint8_t att2_code;
+    };
+
     // GPIO helpers
     void _init_gpio_map();
     void _set_gpio_field(gpio_field_id id, uint32_t v);
@@ -92,17 +103,21 @@ private:
 
     // Chip-level xfers
     void     _cpld_wr(uint8_t reg7, uint32_t data24);
+    void     _cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t value);
     uint16_t _ltc5594_xfer16(uint16_t w);
     uint16_t _ltc6948_xfer16(uint16_t w);
+    void     _program_ltc6948_integer_n(uint16_t n_div, uint8_t r_div);
 
 private:
     uhd::usrp::dboard_iface::sptr _iface;
     uhd::spi_config_t _spi_cfg;
 
     std::mutex _spi_mutex;
+    std::mutex _cpld_mutex;
 
     std::map<gpio_field_id, gpio_field_info> _gpio_map;
     gpio_reg_cache _rx_gpio;
+    std::map<uint8_t, cpld_cache_entry> _cpld_cache;
 
     // кэш текущего SPI destination (чтобы не дёргать GPIO каждый раз)
     bool _spi_dest_valid{false};

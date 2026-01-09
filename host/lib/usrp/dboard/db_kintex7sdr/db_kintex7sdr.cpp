@@ -3,7 +3,9 @@
 #include <uhd/usrp/dboard_manager.hpp>
 #include <uhd/utils/static.hpp>
 
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <iomanip>
 #include <sstream>
@@ -20,6 +22,15 @@ static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 31.5, 0.5);
 // На большинстве dboard-дизайнов "ничего не выбрано" для 3-битного SPI_ADDR = 0b111.
 // Если в твоём CPLD другое соглашение — поменяй здесь.
 static const uint32_t SPI_DEST_NONE_3B = 0x7u;
+
+static const std::array<db_kintex7sdr_rx::gain_profile, 6> KINTEX7SDR_GAIN_TABLE{{
+    {0.0,  0b00, 0x00},
+    {6.0,  0b01, 0x10},
+    {12.0, 0b10, 0x20},
+    {18.0, 0b11, 0x30},
+    {24.0, 0b11, 0x40},
+    {30.0, 0b11, 0x50},
+}};
 
 // ============================================================================
 // db_kintex7sdr_rx
@@ -234,7 +245,32 @@ uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nb
 
 void db_kintex7sdr_rx::_cpld_wr(uint8_t reg7, uint32_t data24)
 {
-    (void)_spi_xfer_to(uint32_t(cpld::SPI_DEST_CPLD), cpld::make_frame_wr(reg7, data24), 32);
+    const uint32_t data = data24 & 0x00FFFFFFu;
+    std::lock_guard<std::mutex> lock(_cpld_mutex);
+    auto& entry = _cpld_cache[reg7];
+    if (entry.valid && entry.value == data) {
+        return;
+    }
+
+    (void)_spi_xfer_to(uint32_t(cpld::SPI_DEST_CPLD), cpld::make_frame_wr(reg7, data), 32);
+    entry.value = data;
+    entry.valid = true;
+}
+
+void db_kintex7sdr_rx::_cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t value)
+{
+    uint32_t base = 0;
+    {
+        std::lock_guard<std::mutex> lock(_cpld_mutex);
+        auto it = _cpld_cache.find(reg7);
+        if (it != _cpld_cache.end() && it->second.valid) {
+            base = it->second.value;
+        }
+    }
+
+    // Если кэш пустой, считаем базовое значение 0 и пишем только mask-биты.
+    const uint32_t next = (base & ~mask) | (value & mask);
+    _cpld_wr(reg7, next);
 }
 
 uint16_t db_kintex7sdr_rx::_ltc5594_xfer16(uint16_t w)
@@ -261,25 +297,67 @@ void db_kintex7sdr_rx::log_ltc5594_chip_id()
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 }
 
+void db_kintex7sdr_rx::_program_ltc6948_integer_n(uint16_t n_div, uint8_t r_div)
+{
+    // TODO: заполнить правильные регистры LTC6948 для N/R после проверки datasheet.
+    // Здесь оставляем скелет — только логируем вычисленные значения.
+    std::ostringstream oss;
+    oss << "LTC6948 integer-N settings: N=" << n_div << " R=" << unsigned(r_div);
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
+}
+
 // ============================================================================
 // UHD coercers (пока заглушки)
 // ============================================================================
 
 double db_kintex7sdr_rx::set_rx_frequency(double freq)
 {
-    // TODO:
-    //  - рассчитать настройки LTC6948 (N/R/FRAC) под требуемую LO
-    //  - запрограммировать regs через _ltc6948_xfer16(ltc6948::make_word_wr(...))
-    //  - при необходимости управлять делителями/фильтрами через CPLD
+    constexpr double k_min_freq = 300e6;
+    constexpr double k_max_freq = 2200e6;
+    constexpr double k_step_hz = 1e6;
+    constexpr double k_ref_hz = 100e6;
+
+    if (freq < k_min_freq) {
+        freq = k_min_freq;
+    } else if (freq > k_max_freq) {
+        freq = k_max_freq;
+    }
+
+    freq = std::round(freq / k_step_hz) * k_step_hz;
+
+    const auto n_div = static_cast<uint16_t>(std::round(freq / k_ref_hz));
+    const uint8_t r_div = 1;
+
+    _program_ltc6948_integer_n(n_div, r_div);
+
     _rx_freq = freq;
     return _rx_freq;
 }
 
 double db_kintex7sdr_rx::set_rx_gain(double gain)
 {
-    // TODO:
-    //  - перевести gain (dB) в коды аттенюаторов/усилителей
-    //  - записать CPLD регистры или GPIO
+    // ВНИМАНИЕ: соответствие битов REG_CTRL и карт усиления должно
+    // совпадать с regmap_core в CPLD.
+    gain = KINTEX7SDR_RX_GAIN_RANGE.clip(gain);
+
+    const gain_profile* profile = &KINTEX7SDR_GAIN_TABLE.front();
+    for (const auto& entry : KINTEX7SDR_GAIN_TABLE) {
+        if (gain >= entry.gain_db) {
+            profile = &entry;
+        }
+    }
+
+    uint32_t att1_value = 0;
+    if (profile->att1_code & 0x2) {
+        att1_value |= cpld::CTRL_ATT1_C1;
+    }
+    if (profile->att1_code & 0x1) {
+        att1_value |= cpld::CTRL_ATT1_C2;
+    }
+
+    _cpld_update_bits(cpld::REG_CTRL, cpld::CTRL_ATT1_MASK, att1_value);
+    _cpld_wr(cpld::REG_ATT2_CODE, profile->att2_code);
+
     _rx_gain = gain;
     return _rx_gain;
 }

@@ -55,12 +55,12 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
 
     // 3) Безопасные дефолты
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
-    _set_gpio_field(GPIO_CPLD_RST_N, 0);
+    _set_gpio_field(GPIO_CPLD_RST_N, 1);
     _flush_gpio();
 
     // 4) CPLD reset sequence
     std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    _set_gpio_field(GPIO_CPLD_RST_N, 1);
+    _set_gpio_field(GPIO_CPLD_RST_N, 0);
     _flush_gpio();
 
     // Дай железу чуть времени выйти в рабочий режим (особенно если SPI через CPLD)

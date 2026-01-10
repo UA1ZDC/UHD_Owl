@@ -17,7 +17,8 @@ namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
 // ------------------------------------------------------------------
 // Дефолты (замени под свой тракт/плату)
 // ------------------------------------------------------------------
-static const uhd::freq_range_t KINTEX7SDR_RX_FREQ_RANGE(10e6, 6.0e9);
+static const uhd::freq_range_t KINTEX7SDR_RX_FREQ_RANGE(300e6, 2.2e9);
+static const uhd::freq_range_t KINTEX7SDR_RX_BW_RANGE(100e6, 100e6);
 static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 31.5, 0.5);
 static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 
@@ -95,9 +96,8 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
         get_rx_subtree()->create<bool>("enabled").set(true);
 
         // bandwidth пока фиксированная заглушка (подставь реальную полосу тракта)
-        const double bw = 40e6;
-        get_rx_subtree()->create<double>("bandwidth/value").set(bw);
-        get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(uhd::freq_range_t(bw, bw));
+        get_rx_subtree()->create<double>("bandwidth/value").set(KINTEX7SDR_RX_BW_RANGE.start());
+        get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
     }
 
     // 6) Быстрый sanity-check: попробуем прочитать CHIPID LTC5594

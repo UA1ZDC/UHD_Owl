@@ -4,13 +4,13 @@
 // ============================================================================
 // spi_engine.v - SPI frame engine (MODE0) + robust SEL latch/error handling
 //
-// Improvements in this patched version:
-//  1) Added power-up initialization (initial) for all state regs.
-//  2) Made evt_frame_end a ONE-CLOCK PULSE.
-//     Rationale: bitcnt saturates at 31; if master keeps clocking SCLK while
-//     CS stays low, (bitcnt==31) remains true and evt_frame_end would stay high.
-//     That can cause repeated W1 actions (APPLY/SOFT_RST) and repeated commits.
-//     We add frame_end_seen to ensure evt_frame_end pulses only once per CS.
+// Changes vs previous version:
+//  - SPI_ADDR is treated as ASYNC (comes from GPIO pins driven by FPGA).
+//  - We do NOT sample SPI_ADDR on SCLK edges (avoids metastability/glitches).
+//  - We latch sel_latched on CS falling edge.
+//  - On CS rising edge we compare current spi_addr with sel_latched:
+//      if different -> sticky err_invalid_sel = 1
+//    (meaning: SPI_ADDR was changed during the active CS window).
 // ============================================================================
 
 module spi_engine #(
@@ -51,15 +51,8 @@ module spi_engine #(
     assign cs_active   = ~cs_n;
     assign sel_is_cpld = (sel_latched == CPLD_DEST);
 
-    // CMD end is naturally a pulse, because bitcnt increments past 7.
-    assign evt_cmd_end = cs_active && (bitcnt == 6'd7);
-
-    // -----------------------------------------------------------------
-    // evt_frame_end MUST be a pulse. Because bitcnt saturates at 31,
-    // we gate it with frame_end_seen.
-    // -----------------------------------------------------------------
-    reg frame_end_seen;
-    assign evt_frame_end = cs_active && (bitcnt == 6'd31) && !frame_end_seen;
+    assign evt_cmd_end   = cs_active && (bitcnt == 6'd7);
+    assign evt_frame_end = cs_active && (bitcnt == 6'd31);
 
     reg [7:0]  cmd_shift;
     reg [23:0] data_shift;
@@ -68,15 +61,12 @@ module spi_engine #(
     assign wr_data_full  = {data_shift[22:0], mosi};
 
     reg [23:0] rd_word_lat;
-    reg        miso_bit_reg;
+
+    reg miso_bit_reg;
 
     wire in_cmd_phase  = (bitcnt < 6'd8);
     wire in_data_phase = (bitcnt >= 6'd8);
 
-    // MISO behavior:
-    //  - In command phase: immediate echo of MOSI.
-    //  - In write payload phase: echo MOSI.
-    //  - In read payload phase: output rd_word_lat bits (prepared on negedge).
     wire miso_data =
         in_cmd_phase ? mosi :
         (is_write_lat && in_data_phase) ? mosi :
@@ -84,25 +74,6 @@ module spi_engine #(
 
     assign miso_oe = cs_active && sel_is_cpld;
     assign miso_o  = miso_data;
-
-    // ------------------------------------------------------------
-    // Power-up init (helps simulation and avoids unknown start state)
-    // NOTE: For HW-deterministic init you may also use external reset,
-    // but initial is accepted by your current XST/CPLD flow.
-    // ------------------------------------------------------------
-    initial begin
-        bitcnt          = 6'd0;
-        cmd_shift       = 8'd0;
-        data_shift      = 24'd0;
-        is_write_lat    = 1'b0;
-        bank_lat        = 3'd0;
-        reg_lat         = 4'd0;
-        sel_latched     = CPLD_DEST;
-        err_invalid_sel = 1'b0;
-        rd_word_lat     = 24'd0;
-        miso_bit_reg    = 1'b0;
-        frame_end_seen  = 1'b0;
-    end
 
     // ------------------------------------------------------------
     // Latch selector on CS falling edge (start of transaction)
@@ -118,21 +89,17 @@ module spi_engine #(
     always @(posedge sclk or posedge cs_n) begin
         if (cs_n) begin
             // End of transaction / idle
-            bitcnt         <= 6'd0;
-            cmd_shift      <= 8'd0;
-            data_shift     <= 24'd0;
+            bitcnt       <= 6'd0;
+            cmd_shift    <= 8'd0;
+            data_shift   <= 24'd0;
 
-            is_write_lat   <= 1'b0;
-            bank_lat       <= 3'd0;
-            reg_lat        <= 4'd0;
+            is_write_lat <= 1'b0;
+            bank_lat     <= 3'd0;
+            reg_lat      <= 4'd0;
 
-            rd_word_lat    <= 24'd0;
+            rd_word_lat  <= 24'd0;
 
-            // New transaction will re-arm frame_end pulse
-            frame_end_seen <= 1'b0;
-
-            // Robust ERR_INVALID_SEL:
-            // if address != latched at CS end -> it was changed during CS active
+            // Robust ERR_INVALID_SEL: if address != latched at CS end -> it was changed during CS active
             if (spi_addr != sel_latched) begin
                 err_invalid_sel <= 1'b1;
             end
@@ -142,13 +109,6 @@ module spi_engine #(
             // Clear sticky selection error on SOFT_RST event (from regmap)
             if (clr_err_invalid_sel_evt) begin
                 err_invalid_sel <= 1'b0;
-            end
-
-            // Once we reached bit 31, keep remembering that frame end happened.
-            // (evt_frame_end will be a one-clock pulse when bitcnt==31 and
-            // frame_end_seen==0).
-            if (bitcnt == 6'd31) begin
-                frame_end_seen <= 1'b1;
             end
 
             // Shift in CMD
@@ -172,7 +132,7 @@ module spi_engine #(
                 data_shift <= {data_shift[22:0], mosi};
             end
 
-            // Advance counter (saturate at 31)
+            // Advance counter
             if (bitcnt < 6'd31) begin
                 bitcnt <= bitcnt + 6'd1;
             end else begin
@@ -201,3 +161,4 @@ module spi_engine #(
 endmodule
 
 `default_nettype wire
+

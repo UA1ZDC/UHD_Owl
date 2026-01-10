@@ -8,22 +8,14 @@
 //  - APPLY mode    : shift stored ATT2_CODE[6:0]
 //  - AUTOLATCH mode: shift raw MOSI bits as they arrive (payload D[6:0])
 //
-// LE pulse:
-//  - In the original version LE was generated as (le_armed && sclk). If the
-//    SPI master violated the protocol and kept toggling SCLK after frame end
-//    while CS stayed active, LE could pulse multiple times.
-//  - In this patched version we generate a one-shot LE request (le_pulse_req)
-//    that is asserted once at frame end and then auto-clears.
-//
-// NOTE: This pairs well with spi_engine_patched.v where evt_frame_end is also
-// made a one-clock pulse (so W1 actions can't retrigger).
+// LE pulse: asserted while SCLK high and le_armed=1, right after frame end.
 // ============================================================================
 
 module att2_engine (
     input  wire sclk,
     input  wire cs_n,
 
-    input  wire mosi_raw,     // raw MOSI for true AUTOLATCH
+    input  wire mosi_raw,     // <<< NEW: raw MOSI for true AUTOLATCH
 
     input  wire       cs_active,
     input  wire [5:0] bitcnt,
@@ -58,15 +50,13 @@ module att2_engine (
     localparam integer APPLY_W1_BIT = 0;
 
     // Decode CMD at cmd end
-    wire cmd_is_write   = (cmd_byte_full[7] == 1'b1);
+    wire cmd_is_write  = (cmd_byte_full[7] == 1'b1);
     wire [2:0] cmd_bank = cmd_byte_full[6:4];
     wire [3:0] cmd_reg  = cmd_byte_full[3:0];
 
     // mode: 0 idle, 1 APPLY, 2 AUTOLATCH
     reg [1:0] mode;
-
-    // One-shot LE request (asserted once, then auto-clears)
-    reg le_pulse_req;
+    reg       le_armed;
 
     // Last 7 payload clocks: bitcnt 25..31
     wire shift_window =
@@ -100,8 +90,8 @@ module att2_engine (
     end
 
     // Trigger conditions at frame end
-    wire apply_trigger     = (mode == 2'd1) && wr_data_full[APPLY_W1_BIT];
-    wire autolatch_trigger = (mode == 2'd2);
+    wire apply_trigger      = (mode == 2'd1) && wr_data_full[APPLY_W1_BIT];
+    wire autolatch_trigger  = (mode == 2'd2);
 
     // Apply done pulse (used to set STATUS1.APPLY_DONE)
     assign apply_done_set_pulse =
@@ -118,42 +108,27 @@ module att2_engine (
           (cmd_bank == BANK2 && cmd_reg == R_ATT2_CODE && ctrl0_autolatch)
         );
 
-    // Busy = mode active or LE pulse pending
-    assign att2_busy = (mode != 2'd0) || le_pulse_req;
+    // Busy = mode active or LE armed
+    assign att2_busy = (mode != 2'd0) || le_armed;
 
-    // LE output (one-shot request). Polarity controlled by CTRL0.
-    // We intentionally do NOT gate LE with SCLK here: pulse width becomes
-    // "from frame_end until next SCLK edge or CS deassert" which is robust.
-    wire le_level = le_pulse_req;
-    assign ATT2_RX_LE = ctrl0_le_pol ? ~le_level : le_level;
-
-    // Power-up init for state regs (helps sim / avoids unknown start)
-    initial begin
-        mode         = 2'd0;
-        le_pulse_req = 1'b0;
-        att2_mosi_reg = 1'b0;
-    end
+    // LE pulse: active while SCLK high and le_armed=1
+    wire le_pulse_level = le_armed && sclk;
+    assign ATT2_RX_LE = ctrl0_le_pol ? ~le_pulse_level : le_pulse_level;
 
     // State
     always @(posedge sclk or posedge cs_n) begin
         if (cs_n) begin
-            mode         <= 2'd0;
-            le_pulse_req <= 1'b0;
+            mode     <= 2'd0;
+            le_armed <= 1'b0;
         end else begin
-            // Default: auto-clear LE request after one SCLK (if it was set)
-            // (set at frame_end has priority below)
-            if (le_pulse_req) begin
-                le_pulse_req <= 1'b0;
-            end
-
             // Select mode at CMD end
             if (evt_cmd_end && sel_is_cpld && cmd_is_write) begin
                 if (cmd_bank == BANK2 && cmd_reg == R_ATT2_CTRL) begin
-                    mode         <= 2'd1; // APPLY
-                    le_pulse_req <= 1'b0;
+                    mode     <= 2'd1; // APPLY
+                    le_armed <= 1'b0;
                 end else if (cmd_bank == BANK2 && cmd_reg == R_ATT2_CODE && ctrl0_autolatch) begin
-                    mode         <= 2'd2; // AUTOLATCH
-                    le_pulse_req <= 1'b0;
+                    mode     <= 2'd2; // AUTOLATCH
+                    le_armed <= 1'b0;
                 end else begin
                     mode <= 2'd0;
                 end
@@ -162,7 +137,7 @@ module att2_engine (
             // Frame end -> optional LE + stop shifting mode
             if (evt_frame_end && sel_is_cpld && is_write_lat) begin
                 if (apply_trigger || autolatch_trigger) begin
-                    le_pulse_req <= 1'b1; // one-shot
+                    le_armed <= 1'b1;
                 end
                 mode <= 2'd0;
             end

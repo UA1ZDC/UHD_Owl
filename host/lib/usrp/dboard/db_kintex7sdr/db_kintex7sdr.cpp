@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <sstream>
 #include <thread>
+#include <vector>
 
 namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
 
@@ -18,6 +19,7 @@ namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
 // ------------------------------------------------------------------
 static const uhd::freq_range_t KINTEX7SDR_RX_FREQ_RANGE(10e6, 6.0e9);
 static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 31.5, 0.5);
+static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 
 // На большинстве dboard-дизайнов "ничего не выбрано" для 3-битного SPI_ADDR = 0b111.
 // Если в твоём CPLD другое соглашение — поменяй здесь.
@@ -80,6 +82,14 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
             .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_gain, this, _1))
             .set(0.0);
         get_rx_subtree()->create<uhd::meta_range_t>("gains/PGA0/range").set(KINTEX7SDR_RX_GAIN_RANGE);
+
+        get_rx_subtree()
+            ->create<std::string>("antenna/value")
+            .set(KINTEX7SDR_RX_ANTENNAS.at(0));
+        get_rx_subtree()
+            ->create<std::vector<std::string>>("antenna/options")
+            .set(KINTEX7SDR_RX_ANTENNAS);
+
 
         get_rx_subtree()->create<std::string>("connection").set("IQ");
         get_rx_subtree()->create<bool>("enabled").set(true);

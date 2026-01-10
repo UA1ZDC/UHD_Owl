@@ -1,0 +1,278 @@
+`timescale 1ns / 1ps
+`default_nettype none
+// ============================================================================
+// regfile_compact.v - Compact register storage for XC2C256 (fits in CPLD)
+//
+// Why compact:
+//  - CoolRunner-II has NO block RAM; arrays become flip-flops/macrocells.
+//  - Big 2D arrays won't fit. Store only necessary state.
+//
+// XST(CPLD) friendly:
+//  - no always @(*) / @*  -> explicit sensitivity list
+//  - no posedge cs_n in sensitivity list
+//  - single clock: posedge sclk
+//  - "end of transaction" commit on (cs_n==0 && bitcnt==31) (fixed 32-bit frame)
+// ============================================================================
+
+module regfile_compact #(
+    parameter [7:0] ID0_CHAR   = "K",
+    parameter [7:0] ID1_CHAR   = "7",
+    parameter [7:0] ID2_CHAR   = "S",
+    parameter [7:0] VER_MAJOR  = 8'd1,
+    parameter [7:0] VER_MINOR  = 8'd0,
+    parameter [7:0] VER_PATCH  = 8'd0
+)(
+    input  wire        sclk,
+    input  wire        cs_n,
+    input  wire [5:0]  bitcnt,     // from spi_engine (0..31)
+
+    input  wire [7:0]  gpio0_now,
+    input  wire [7:0]  gpio1_now,
+
+    input  wire        soft_reset_evt,
+
+    input  wire        commit_we,
+    input  wire [2:0]  w_bank,
+    input  wire [3:0]  w_reg,
+    input  wire [23:0] w_data,
+    input  wire [23:0] w_mask,     // 1 = writable bit (upstream already prepared)
+
+    input  wire [23:0] status1_set_mask_pulse, // sticky set pulses during frame
+    input  wire        clr_status1_on_cs_rise,  // armed: clear bits0..3 at commit
+
+    input  wire        att2_last_ok_set_pulse,
+    input  wire        att2_last_ok_clr_pulse,
+
+    input  wire [2:0]  rd_bank,
+    input  wire [3:0]  rd_reg,
+    output reg  [23:0] rd_data,
+
+    output wire [23:0] ctrl0_q,
+    output wire [23:0] ctrl1_q,
+    output wire [23:0] att2_code_q,
+    output wire [23:0] status1_q,
+    output wire [23:0] att2_ctrl_q,
+    output wire [23:0] gpio_in0_q,
+    output wire [23:0] gpio_in1_q
+);
+
+    // ---------------------------
+    // Address map constants
+    // ---------------------------
+    localparam [2:0] BANK0 = 3'd0;
+    localparam [2:0] BANK1 = 3'd1;
+    localparam [2:0] BANK2 = 3'd2;
+    localparam [2:0] BANK3 = 3'd3;
+
+    // BANK0 regs
+    localparam [3:0] R_ID0   = 4'h0;
+    localparam [3:0] R_ID1   = 4'h1;
+    localparam [3:0] R_ID2   = 4'h2;
+    localparam [3:0] R_VMAJ  = 4'h3;
+    localparam [3:0] R_VMIN  = 4'h4;
+    localparam [3:0] R_VPAT  = 4'h5;
+    localparam [3:0] R_STAT1 = 4'h7;
+
+    // BANK1 regs
+    localparam [3:0] R_CTRL0 = 4'h0;
+    localparam [3:0] R_CTRL1 = 4'h1;
+
+    // BANK2 regs
+    localparam [3:0] R_ATT2_CODE = 4'h0;
+    localparam [3:0] R_ATT2_CTRL = 4'h1;
+
+    // BANK3 regs
+    localparam [3:0] R_GPIO_IN0  = 4'h0;
+    localparam [3:0] R_GPIO_IN1  = 4'h1;
+
+    // STATUS1: bits0..3 clear-on-read
+    localparam [7:0] STATUS1_CLR_MASK8 = 8'h0F;
+
+    // ATT2_CTRL stored bit: LAST_OK at bit2
+    localparam integer ATT2CTL_LAST_OK = 2;
+
+    // ---------------------------
+    // Stored state (minimal)
+    // ---------------------------
+    reg [7:0] ctrl0_r;
+    reg [7:0] ctrl1_r;
+    reg [6:0] att2_code_r;
+    reg       att2_last_ok_r;
+    reg [7:0] status1_r;
+    reg [7:0] gpio_in0_r;
+    reg [7:0] gpio_in1_r;
+
+    // Defaults
+    localparam [7:0] CTRL0_DFLT8      = 8'h00;
+    localparam [7:0] CTRL1_DFLT8      = 8'h00;
+    localparam [6:0] ATT2_CODE_DFLT7  = 7'd0;
+    localparam       ATT2_LAST_OK_DFLT= 1'b1;
+    localparam [7:0] STAT1_DFLT8      = 8'h00;
+    localparam [7:0] STAT1_SOFT_RST8  = 8'h02; // bit1 set
+
+    // Power-up defaults (если XST потом не примет initial - заменим reset-сигналом)
+    initial begin
+        ctrl0_r        = CTRL0_DFLT8;
+        ctrl1_r        = CTRL1_DFLT8;
+        att2_code_r    = ATT2_CODE_DFLT7;
+        att2_last_ok_r = ATT2_LAST_OK_DFLT;
+        status1_r      = STAT1_DFLT8;
+        gpio_in0_r     = 8'h00;
+        gpio_in1_r     = 8'h00;
+    end
+
+    // 24-bit views
+    assign ctrl0_q     = {16'd0, ctrl0_r};
+    assign ctrl1_q     = {16'd0, ctrl1_r};
+    assign att2_code_q = {17'd0, att2_code_r};
+    assign status1_q   = {16'd0, status1_r};
+    assign att2_ctrl_q = {21'd0, att2_last_ok_r, 2'd0}; // bit2 only
+    assign gpio_in0_q  = {16'd0, gpio_in0_r};
+    assign gpio_in1_q  = {16'd0, gpio_in1_r};
+
+    // ---------------------------
+    // Frame qualifiers
+    // ---------------------------
+    wire frame_active = (cs_n == 1'b0);
+    wire frame_start  = frame_active && (bitcnt == 6'd0);
+    wire frame_end    = frame_active && (bitcnt == 6'd31);
+
+    // Pending accumulators inside a frame
+    reg [7:0] pend_status1_set8;
+    reg       pend_last_ok_set;
+    reg       pend_last_ok_clr;
+
+    // scratch for STATUS1 update (declared at module scope for old parsers)
+    reg [7:0] status1_next8;
+
+    // ---------------------------
+    // Sequential logic (single clock domain)
+    // ---------------------------
+    always @(posedge sclk) begin
+        // New frame: clear pendings
+        if (frame_start) begin
+            pend_status1_set8 <= 8'h00;
+            pend_last_ok_set  <= 1'b0;
+            pend_last_ok_clr  <= 1'b0;
+        end
+
+        if (frame_active) begin
+            // Accumulate sticky STATUS1 sets (low 8 bits)
+            if (status1_set_mask_pulse[7:0] != 8'h00) begin
+                pend_status1_set8 <= (pend_status1_set8 | status1_set_mask_pulse[7:0]);
+            end
+
+            // Accumulate LAST_OK pulses
+            if (att2_last_ok_set_pulse) begin
+                pend_last_ok_set <= 1'b1;
+            end
+            if (att2_last_ok_clr_pulse) begin
+                pend_last_ok_clr <= 1'b1;
+            end
+
+            // Commit at the end of fixed 32-bit frame
+            if (frame_end) begin
+                // GPIO snapshot
+                gpio_in0_r <= gpio0_now;
+                gpio_in1_r <= gpio1_now;
+
+                // Soft reset has highest priority
+                if (soft_reset_evt) begin
+                    ctrl0_r        <= CTRL0_DFLT8;
+                    ctrl1_r        <= CTRL1_DFLT8;
+                    att2_code_r    <= ATT2_CODE_DFLT7;
+                    att2_last_ok_r <= ATT2_LAST_OK_DFLT;
+                    status1_r      <= STAT1_SOFT_RST8;
+                end else begin
+                    // STATUS1: clear-on-read (armed) then OR sticky sets
+                    status1_next8 = status1_r;
+                    if (clr_status1_on_cs_rise) begin
+                        status1_next8 = (status1_next8 & ~STATUS1_CLR_MASK8);
+                    end
+                    status1_next8 = (status1_next8 | pend_status1_set8 | status1_set_mask_pulse[7:0]);
+                    status1_r <= status1_next8;
+
+                    // ATT2 LAST_OK: clr then set
+                    if (pend_last_ok_clr | att2_last_ok_clr_pulse) begin
+                        att2_last_ok_r <= 1'b0;
+                    end
+                    if (pend_last_ok_set | att2_last_ok_set_pulse) begin
+                        att2_last_ok_r <= 1'b1;
+                    end
+
+                    // Apply writes (only RW regs)
+                    if (commit_we) begin
+                        // CTRL0 (bank1, reg0) low 8 bits
+                        if ((w_bank == BANK1) && (w_reg == R_CTRL0)) begin
+                            ctrl0_r <= (ctrl0_r & ~w_mask[7:0]) | (w_data[7:0] & w_mask[7:0]);
+                        end
+                        // CTRL1 (bank1, reg1)
+                        else if ((w_bank == BANK1) && (w_reg == R_CTRL1)) begin
+                            ctrl1_r <= (ctrl1_r & ~w_mask[7:0]) | (w_data[7:0] & w_mask[7:0]);
+                        end
+                        // ATT2_CODE (bank2, reg0) bits6..0
+                        else if ((w_bank == BANK2) && (w_reg == R_ATT2_CODE)) begin
+                            att2_code_r <= (att2_code_r & ~w_mask[6:0]) | (w_data[6:0] & w_mask[6:0]);
+                        end
+                        else begin
+                            // other addresses are RO / ignored here (errors raised upstream)
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    // ---------------------------
+    // Combinational read mux (explicit sensitivity list)
+    // ---------------------------
+    always @(rd_bank or rd_reg or
+             ctrl0_r or ctrl1_r or att2_code_r or att2_last_ok_r or
+             status1_r or gpio_in0_r or gpio_in1_r) begin
+        rd_data = 24'd0;
+
+        case (rd_bank)
+            BANK0: begin
+                case (rd_reg)
+                    R_ID0:   rd_data = {16'd0, ID0_CHAR};
+                    R_ID1:   rd_data = {16'd0, ID1_CHAR};
+                    R_ID2:   rd_data = {16'd0, ID2_CHAR};
+                    R_VMAJ:  rd_data = {16'd0, VER_MAJOR};
+                    R_VMIN:  rd_data = {16'd0, VER_MINOR};
+                    R_VPAT:  rd_data = {16'd0, VER_PATCH};
+                    R_STAT1: rd_data = {16'd0, status1_r};
+                    default: rd_data = 24'd0;
+                endcase
+            end
+
+            BANK1: begin
+                case (rd_reg)
+                    R_CTRL0: rd_data = {16'd0, ctrl0_r};
+                    R_CTRL1: rd_data = {16'd0, ctrl1_r};
+                    default: rd_data = 24'd0;
+                endcase
+            end
+
+            BANK2: begin
+                case (rd_reg)
+                    R_ATT2_CODE: rd_data = {17'd0, att2_code_r};
+                    R_ATT2_CTRL: rd_data = {21'd0, att2_last_ok_r, 2'd0};
+                    default:     rd_data = 24'd0;
+                endcase
+            end
+
+            BANK3: begin
+                case (rd_reg)
+                    R_GPIO_IN0: rd_data = {16'd0, gpio_in0_r};
+                    R_GPIO_IN1: rd_data = {16'd0, gpio_in1_r};
+                    default:    rd_data = 24'd0;
+                endcase
+            end
+
+            default: rd_data = 24'd0;
+        endcase
+    end
+
+endmodule
+
+`default_nettype wire

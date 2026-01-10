@@ -1,9 +1,9 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <report-views version="2.0" >
  <header>
-  <DateModified>2026-01-10T14:44:13</DateModified>
+  <DateModified>2026-01-10T15:16:36</DateModified>
   <ModuleName>top_module_full</ModuleName>
-  <SummaryTimeStamp>2026-01-10T14:43:54</SummaryTimeStamp>
+  <SummaryTimeStamp>2026-01-10T15:14:15</SummaryTimeStamp>
   <SavedFilePath>C:/Users/yurii/Desktop/ISEProjects/CPLD/iseconfig/top_module.xreport</SavedFilePath>
   <ImplementationReportsDirectory>C:/Users/yurii/Desktop/ISEProjects/CPLD</ImplementationReportsDirectory>
   <DateInitialized>2026-01-10T14:43:24</DateInitialized>

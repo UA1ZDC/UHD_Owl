@@ -137,7 +137,7 @@ module regmap_core #(
 
     wire soft_reset_evt;
 
-    regfile_2d #(
+    regfile_compact #(
         .ID0_CHAR  (ID0_CHAR),
         .ID1_CHAR  (ID1_CHAR),
         .ID2_CHAR  (ID2_CHAR),
@@ -147,6 +147,8 @@ module regmap_core #(
     ) u_rf (
         .sclk (sclk),
         .cs_n (cs_n),
+		  
+		  .bitcnt(bitcnt),
 
         .gpio0_now (gpio0_now),
         .gpio1_now (gpio1_now),

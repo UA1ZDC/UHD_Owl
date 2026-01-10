@@ -331,9 +331,7 @@ module regmap_core #(
             rd_mux = rf_rd_data;
         end
     end
-    // Force 24-bit readback format: only low byte is meaningful, upper 16 bits are 0.
-    // This removes "no driver" warnings for rd_word_for_cmd[23:8] in CPLD flow.
-    assign rd_word_for_cmd = {16'h0000, rd_mux[7:0]};
+    assign rd_word_for_cmd = rd_mux;
 
     // Outputs from CTRL0
     assign TPS_EN     = ctrl0_q[0];

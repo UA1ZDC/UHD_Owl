@@ -2,18 +2,15 @@
 
 `default_nettype none
 // ============================================================================
-// spi_engine_clean.v - SPI frame engine (MODE0) + robust SEL latch/error handling
+// spi_engine.v - SPI frame engine (MODE0) + robust SEL latch/error handling
 //
-// Key properties:
-//  - SPI_ADDR is treated as ASYNC (GPIO from FPGA). We latch it only on CS falling.
-//  - MISO during CMD phase = immediate echo of MOSI (helps master alignment).
-//  - For WRITE payloads: MISO echoes MOSI.
-//  - For READ payloads: MISO outputs rd_word_lat bits (prepared on negedge).
-//  - evt_frame_end is a ONE-CLOCK PULSE (bitcnt saturates at 31).
-//
-// "Clean" changes (to reduce harmless warnings and save a couple FFs):
-//  - cmd_shift is 7 bits (instead of 8). We only need the previous 7 CMD bits.
-//  - data_shift is 23 bits (instead of 24). We only need the previous 23 DATA bits.
+// Improvements in this patched version:
+//  1) Added power-up initialization (initial) for all state regs.
+//  2) Made evt_frame_end a ONE-CLOCK PULSE.
+//     Rationale: bitcnt saturates at 31; if master keeps clocking SCLK while
+//     CS stays low, (bitcnt==31) remains true and evt_frame_end would stay high.
+//     That can cause repeated W1 actions (APPLY/SOFT_RST) and repeated commits.
+//     We add frame_end_seen to ensure evt_frame_end pulses only once per CS.
 // ============================================================================
 
 module spi_engine #(
@@ -23,7 +20,7 @@ module spi_engine #(
     input  wire       cs_n,       // active-low CS
     input  wire       mosi,
 
-    input  wire [2:0] spi_addr,   // ASYNC from FPGA GPIO (stable around CS edges)
+    input  wire [2:0] spi_addr,   // ASYNC from GPIO pins (stable around CS edges)
 
     input  wire [23:0] rd_word_in,
 
@@ -54,49 +51,49 @@ module spi_engine #(
     assign cs_active   = ~cs_n;
     assign sel_is_cpld = (sel_latched == CPLD_DEST);
 
-    // CMD end is naturally a pulse because bitcnt increments past 7.
+    // CMD end is naturally a pulse, because bitcnt increments past 7.
     assign evt_cmd_end = cs_active && (bitcnt == 6'd7);
 
-    // evt_frame_end must be a pulse even though bitcnt saturates at 31.
+    // -----------------------------------------------------------------
+    // evt_frame_end MUST be a pulse. Because bitcnt saturates at 31,
+    // we gate it with frame_end_seen.
+    // -----------------------------------------------------------------
     reg frame_end_seen;
     assign evt_frame_end = cs_active && (bitcnt == 6'd31) && !frame_end_seen;
 
-    // Store only the PREVIOUS bits needed to form {prev_bits, current_mosi}
-    reg [6:0]  cmd_shift;   // previous 7 CMD bits
-    reg [22:0] data_shift;  // previous 23 DATA bits
+    reg [7:0]  cmd_shift;
+    reg [23:0] data_shift;
 
-    // Full CMD / DATA words "as seen on the wire" at current bit.
     assign cmd_byte_full = {cmd_shift[6:0], mosi};
     assign wr_data_full  = {data_shift[22:0], mosi};
 
-    // READ response word latched at CMD end for READ transactions.
     reg [23:0] rd_word_lat;
-
-    // Prepared read bit for MISO (updated on negedge SCLK).
-    reg miso_bit_reg;
+    reg        miso_bit_reg;
 
     wire in_cmd_phase  = (bitcnt < 6'd8);
     wire in_data_phase = (bitcnt >= 6'd8);
 
-    // MISO data selection:
-    //  - CMD phase: immediate echo
-    //  - WRITE payload: echo
-    //  - READ payload: rd_word_lat bits (prepared on negedge)
+    // MISO behavior:
+    //  - In command phase: immediate echo of MOSI.
+    //  - In write payload phase: echo MOSI.
+    //  - In read payload phase: output rd_word_lat bits (prepared on negedge).
     wire miso_data =
         in_cmd_phase ? mosi :
         (is_write_lat && in_data_phase) ? mosi :
         miso_bit_reg;
 
-    // CPLD drives MISO only when selected.
     assign miso_oe = cs_active && sel_is_cpld;
     assign miso_o  = miso_data;
 
-    // Power-up init (helps simulation and gives a defined start state).
-    // NOTE: deterministic HW init should be done via external reset if needed.
+    // ------------------------------------------------------------
+    // Power-up init (helps simulation and avoids unknown start state)
+    // NOTE: For HW-deterministic init you may also use external reset,
+    // but initial is accepted by your current XST/CPLD flow.
+    // ------------------------------------------------------------
     initial begin
         bitcnt          = 6'd0;
-        cmd_shift       = 7'd0;
-        data_shift      = 23'd0;
+        cmd_shift       = 8'd0;
+        data_shift      = 24'd0;
         is_write_lat    = 1'b0;
         bank_lat        = 3'd0;
         reg_lat         = 4'd0;
@@ -107,66 +104,72 @@ module spi_engine #(
         frame_end_seen  = 1'b0;
     end
 
+    // ------------------------------------------------------------
     // Latch selector on CS falling edge (start of transaction)
+    // ------------------------------------------------------------
     always @(negedge cs_n) begin
         sel_latched <= spi_addr;
-        // err_invalid_sel is sticky (cleared only by soft reset event)
+        // do not clear err_invalid_sel here (sticky until SOFT_RST)
     end
 
+    // ------------------------------------------------------------
     // Main SPI sampling
+    // ------------------------------------------------------------
     always @(posedge sclk or posedge cs_n) begin
         if (cs_n) begin
-            // Transaction ended
+            // End of transaction / idle
             bitcnt         <= 6'd0;
-            cmd_shift      <= 7'd0;
-            data_shift     <= 23'd0;
+            cmd_shift      <= 8'd0;
+            data_shift     <= 24'd0;
 
             is_write_lat   <= 1'b0;
             bank_lat       <= 3'd0;
             reg_lat        <= 4'd0;
 
             rd_word_lat    <= 24'd0;
+
+            // New transaction will re-arm frame_end pulse
             frame_end_seen <= 1'b0;
 
-            // Detect illegal selector change during CS active
+            // Robust ERR_INVALID_SEL:
+            // if address != latched at CS end -> it was changed during CS active
             if (spi_addr != sel_latched) begin
                 err_invalid_sel <= 1'b1;
             end
-
         end else begin
             // CS active
 
-            // Clear selection error on SOFT_RST event (from regmap)
+            // Clear sticky selection error on SOFT_RST event (from regmap)
             if (clr_err_invalid_sel_evt) begin
                 err_invalid_sel <= 1'b0;
             end
 
-            // Once bitcnt reached 31, remember it (evt_frame_end is one-shot)
+            // Once we reached bit 31, keep remembering that frame end happened.
+            // (evt_frame_end will be a one-clock pulse when bitcnt==31 and
+            // frame_end_seen==0).
             if (bitcnt == 6'd31) begin
                 frame_end_seen <= 1'b1;
             end
 
-            // Shift in CMD bits (bitcnt 0..7)
+            // Shift in CMD
             if (bitcnt < 6'd8) begin
-                cmd_shift <= {cmd_shift[5:0], mosi};
+                cmd_shift <= {cmd_shift[6:0], mosi};
 
-                // At the last CMD bit, latch decoded fields.
                 if (bitcnt == 6'd7) begin
                     is_write_lat <= cmd_byte_full[7];
                     bank_lat     <= cmd_byte_full[6:4];
                     reg_lat      <= cmd_byte_full[3:0];
 
-                    // Latch READ word for CPLD READ transactions.
+                    // Latch read word now for READ transactions to CPLD
                     if (sel_is_cpld && (cmd_byte_full[7] == 1'b0)) begin
                         rd_word_lat <= rd_word_in;
                     end else begin
                         rd_word_lat <= 24'd0;
                     end
                 end
-
             end else begin
-                // Shift in DATA bits (bitcnt 8..31)
-                data_shift <= {data_shift[21:0], mosi};
+                // Shift in DATA
+                data_shift <= {data_shift[22:0], mosi};
             end
 
             // Advance counter (saturate at 31)
@@ -178,8 +181,10 @@ module spi_engine #(
         end
     end
 
+    // ------------------------------------------------------------
     // Prepare MISO read bit on negedge SCLK (setup before next posedge)
-    // For READ payload: bitcnt 8..31 => rd_word_lat[31-bitcnt] => [23..0]
+    // For READ payload: rd_word_lat[23 - (bitcnt-8)] = rd_word_lat[31 - bitcnt]
+    // ------------------------------------------------------------
     always @(negedge sclk or posedge cs_n) begin
         if (cs_n) begin
             miso_bit_reg <= 1'b0;

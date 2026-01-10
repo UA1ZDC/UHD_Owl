@@ -2,13 +2,7 @@
 
 `default_nettype none
 // ============================================================================
-// top_module_full_clean.v - Top-level wrapper (FULL UCF pin list)
-// + SPI routing by GPIO SPI_ADDR
-//
-// Cleanups vs your current top_module_full.v:
-//  - Removed unused "cpld_rst_n_from_gpio/_unused_rst" wires.
-//    (cpld_io_03 is already visible inside regmap_core via gpio0_now[3] and
-//     can be used for async reset in regfile_compact_patched if you enabled it.)
+// top_module.v - Top-level wrapper (FULL UCF pin list) + SPI routing by GPIO SPI_ADDR
 // ============================================================================
 
 module top_module_full #(
@@ -78,8 +72,11 @@ module top_module_full #(
     // --------------------------------------------------------------------
     // SPI_ADDR derived from GPIO pins (per your UHD driver map):
     // SPI_ADDR[2:0] = GPIO[2:0] = {io_02, io_01, io_00}
+    // GPIO[3] reserved for CPLD_RST_N if needed
     // --------------------------------------------------------------------
     wire [2:0] spi_addr_from_gpio = {cpld_io_02, cpld_io_01, cpld_io_00};
+    wire       cpld_rst_n_from_gpio = cpld_io_03;  // not used yet
+    wire       _unused_rst = cpld_rst_n_from_gpio; // avoid "unused" warnings
 
     // --------------------------------------------------------------------
     // Internal interconnect
@@ -107,7 +104,6 @@ module top_module_full #(
 
     // --------------------------------------------------------------------
     // SPI engine
-    // NOTE: use spi_engine_clean.v (same module name "spi_engine")
     // --------------------------------------------------------------------
     spi_engine #(
         .CPLD_DEST(CPLD_DEST)
@@ -208,13 +204,13 @@ module top_module_full #(
     wire en_ad7922    = cs_active && sel_ad7922;
     wire en_ad7922_2  = cs_active && sel_ad7922_2;
 
-    // CS/SEN active-low
+    // CS/SEN active-low (assert only for selected device during active CS)
     assign CS_LTC6948   = en_ltc6948  ? 1'b0 : 1'b1;
     assign SEN_LTC5594  = en_ltc5594  ? 1'b0 : 1'b1;
     assign SEN_AD7922   = en_ad7922   ? 1'b0 : 1'b1;
     assign SEN_AD7922_2 = en_ad7922_2 ? 1'b0 : 1'b1;
 
-    // Forward SCLK/MOSI when enabled
+    // Forward SCLK/MOSI only when enabled, otherwise hold low
     assign SCLK_LTC6948  = en_ltc6948  ? SCLK_RX : 1'b0;
     assign MOSI_LTC6948  = en_ltc6948  ? MOSI_RX : 1'b0;
 
@@ -262,3 +258,4 @@ module top_module_full #(
 endmodule
 
 `default_nettype wire
+

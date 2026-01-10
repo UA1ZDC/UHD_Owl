@@ -36,6 +36,12 @@ public:
     // helper: чтение CHIPID LTC5594 и лог в UHD
     void log_ltc5594_chip_id();
 
+    struct gain_profile {
+        double gain_db;
+        uint8_t att1_code;
+        uint8_t att2_code;
+    };
+
 private:
     // GPIO fields (минимум нужного сейчас)
     enum gpio_field_id : uint8_t {
@@ -63,12 +69,6 @@ private:
     struct cpld_cache_entry {
         uint32_t value;
         bool valid;
-    };
-
-    struct gain_profile {
-        double gain_db;
-        uint8_t att1_code;
-        uint8_t att2_code;
     };
 
     // GPIO helpers
@@ -102,6 +102,7 @@ private:
     uint32_t _spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits);
 
     // Chip-level xfers
+    uint32_t _cpld_rd(uint8_t reg7);
     void     _cpld_wr(uint8_t reg7, uint32_t data24);
     void     _cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t value);
     uint16_t _ltc5594_xfer16(uint16_t w);

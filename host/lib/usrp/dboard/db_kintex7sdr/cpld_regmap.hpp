@@ -18,7 +18,6 @@ enum spi_dest_t : uint8_t {
 	SPI_DEST_AD7922 = 0x3,
 	SPI_DEST_AD7922_2 = 0x4,
     // 0x5..0x7 reserved
-	SPI_DEST_NONE_3B = 0x7
 };
 
 /***********************************************************************

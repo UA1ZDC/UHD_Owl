@@ -24,7 +24,8 @@ static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 
 // На большинстве dboard-дизайнов "ничего не выбрано" для 3-битного SPI_ADDR = 0b111.
 // Если в твоём CPLD другое соглашение — поменяй здесь.
-//static const uint32_t SPI_DEST_NONE_3B = 0x7u;
+static const uint32_t SPI_DEST_NONE_3B = 0x7u;
+static const uint32_t SPI_DEST_LTC5594 = 0x2;
 
 static const std::array<db_kintex7sdr_rx::gain_profile, 6> KINTEX7SDR_GAIN_TABLE{{
     {0.0,  0b00, 0x00},
@@ -54,7 +55,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     _iface->set_gpio_ddr(uhd::usrp::dboard_iface::UNIT_RX, _rx_gpio.ddr);
 
     // 3) Безопасные дефолты
-    _set_gpio_field(GPIO_SPI_ADDR, cpld::SPI_DEST_NONE_3B);
+    _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
     _set_gpio_field(GPIO_CPLD_RST_N, 1);
     _flush_gpio();
 
@@ -102,7 +103,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
 
     // 6) Быстрый sanity-check: попробуем прочитать CHIPID LTC5594
     // (будет работать только если в твоём UHD есть read_write_spi и SDO подключен)
-    _set_gpio_field(GPIO_SPI_ADDR, cpld::SPI_DEST_LTC5594);
+    _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_LTC5594);
     _flush_gpio();
     log_ltc5594_chip_id();
 }

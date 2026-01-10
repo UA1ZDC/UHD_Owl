@@ -13,9 +13,11 @@ namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr { na
  **********************************************************************/
 enum spi_dest_t : uint8_t {
     SPI_DEST_CPLD    = 0x0,
-    SPI_DEST_LTC5594 = 0x1,
-    SPI_DEST_LTC6948 = 0x2,
-    // 0x3..0x7 reserved
+    SPI_DEST_LTC6948 = 0x1,
+    SPI_DEST_LTC5594 = 0x2,
+	SPI_DEST_AD7922 = 0x3,
+	SPI_DEST_AD7922_2 = 0x4
+    // 0x5..0x7 reserved
 };
 
 /***********************************************************************

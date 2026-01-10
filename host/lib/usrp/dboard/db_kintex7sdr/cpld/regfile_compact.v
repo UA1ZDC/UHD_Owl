@@ -267,11 +267,9 @@ module regfile_compact #(
     end
 
     // ---------------------------
-    // Combinational read mux (explicit sensitivity list)
+    // Combinational read mux (wildcard sensitivity @*)
     // ---------------------------
-    always @(rd_bank or rd_reg or
-             ctrl0_r or ctrl1_r or att2_code_r or att2_last_ok_r or
-             status1_r or gpio_in0_r or gpio_in1_r) begin
+    always @* begin
         rd_data = 24'd0;
 
         case (rd_bank)

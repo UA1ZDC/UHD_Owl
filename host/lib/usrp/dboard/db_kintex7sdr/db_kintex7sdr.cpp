@@ -257,18 +257,34 @@ void db_kintex7sdr_rx::_cpld_wr(uint8_t reg7, uint32_t data24)
     entry.valid = true;
 }
 
+uint32_t db_kintex7sdr_rx::_cpld_rd(uint8_t reg7)
+{
+    const uint32_t rx = _spi_xfer_to(uint32_t(cpld::SPI_DEST_CPLD), cpld::make_frame_rd(reg7), 32);
+    const uint32_t data = rx & 0x00FFFFFFu;
+    std::lock_guard<std::mutex> lock(_cpld_mutex);
+    auto& entry = _cpld_cache[reg7];
+    entry.value = data;
+    entry.valid = true;
+    return data;
+}
+
 void db_kintex7sdr_rx::_cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t value)
 {
     uint32_t base = 0;
+    bool cache_valid = false;
     {
         std::lock_guard<std::mutex> lock(_cpld_mutex);
         auto it = _cpld_cache.find(reg7);
         if (it != _cpld_cache.end() && it->second.valid) {
             base = it->second.value;
+            cache_valid = true;
         }
     }
 
-    // Если кэш пустой, считаем базовое значение 0 и пишем только mask-биты.
+    if (!cache_valid) {
+        base = _cpld_rd(reg7);
+    }
+
     const uint32_t next = (base & ~mask) | (value & mask);
     _cpld_wr(reg7, next);
 }
@@ -355,7 +371,6 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
         r_div = 1.0;
     }
 
-    auto n_div = static_cast<uint16_t>(std::round((freq * r_div) / k_ref_hz));
     auto r_div_u8 = static_cast<uint8_t>(r_div);
 
     if (r_div_u8 < 1) {
@@ -363,6 +378,8 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
     } else if (r_div_u8 > 31) {
         r_div_u8 = 31;
     }
+
+    auto n_div = static_cast<uint16_t>(std::round((freq * r_div_u8) / k_ref_hz));
 
     if (n_div < 32) {
         n_div = 32;

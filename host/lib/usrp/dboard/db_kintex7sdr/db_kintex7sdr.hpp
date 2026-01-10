@@ -102,6 +102,7 @@ private:
     uint32_t _spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits);
 
     // Chip-level xfers
+    uint32_t _cpld_rd(uint8_t reg7);
     void     _cpld_wr(uint8_t reg7, uint32_t data24);
     void     _cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t value);
     uint16_t _ltc5594_xfer16(uint16_t w);

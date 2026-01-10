@@ -30,11 +30,6 @@ enum reg_t : uint8_t {
     REG_STATUS     = 0x04  // sticky flags / status
 };
 
-// REG_CTRL bit definitions (должны совпадать с regmap_core)
-static constexpr uint32_t CTRL_ATT1_C1  = (1u << 0);
-static constexpr uint32_t CTRL_ATT1_C2  = (1u << 1);
-static constexpr uint32_t CTRL_ATT1_MASK = (CTRL_ATT1_C1 | CTRL_ATT1_C2);
-
 // Упаковка 32-битного слова под наш CPLD SPI engine: [CMD][DATA24]
 // CMD: bit7 = 1 write / 0 read, bits[6:0] = reg
 static inline uint32_t make_cmd(const bool is_write, const uint8_t reg7)

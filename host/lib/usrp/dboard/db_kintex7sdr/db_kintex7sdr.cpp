@@ -60,12 +60,11 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     _flush_gpio();
 
     // 4) CPLD reset sequence
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
     _set_gpio_field(GPIO_CPLD_RST_N, 0);
     _flush_gpio();
 
     // Дай железу чуть времени выйти в рабочий режим (особенно если SPI через CPLD)
-    std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
     // 5) Регистрируем UHD properties (как в образце), чтобы UHD реально вызывал наши coercers
     {
@@ -105,6 +104,14 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     // (будет работать только если в твоём UHD есть read_write_spi и SDO подключен)
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_LTC5594);
     _flush_gpio();
+
+    _iface->set_gpio_out(uhd::usrp::dboard_iface::UNIT_RX, 0x02, 0x0f);
+
+    // Минимальный soft reset: записываем 0 в регистр блоков.
+    // При необходимости обнови значение согласно своему даташиту.
+    _ltc5594_xfer16(ltc5594::make_word_wr(ltc5594::REG_BCTL, 0xf8));
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
     log_ltc5594_chip_id();
 }
 
@@ -250,6 +257,7 @@ uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nb
     // 2) xfer (tag-dispatch, чтобы в C++11 не компилировать "лишнюю" ветку)
     using tag_t = decltype(_has_readwrite<uhd::usrp::dboard_iface>(0));
     return _spi_xfer_nolock(word, nbits, tag_t{});
+    //return _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
 }
 
 // ============================================================================
@@ -305,7 +313,7 @@ void db_kintex7sdr_rx::_cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t v
 uint16_t db_kintex7sdr_rx::_ltc5594_xfer16(uint16_t w)
 {
     const uint32_t rx = _spi_xfer_to(uint32_t(cpld::SPI_DEST_LTC5594), uint32_t(w), 16);
-    return uint16_t(rx & 0xFFFFu);
+    return uint16_t((rx >> 16) & 0xFFFFu);
 }
 
 uint16_t db_kintex7sdr_rx::_ltc6948_xfer16(uint16_t w)
@@ -318,10 +326,15 @@ void db_kintex7sdr_rx::log_ltc5594_chip_id()
 {
     const uint16_t rx = _ltc5594_xfer16(ltc5594::make_word_rd(ltc5594::REG_CHIPID));
     const uint8_t chipid = ltc5594::rx_data_byte(rx);
+    const uint8_t rx_msb = static_cast<uint8_t>(rx >> 8);
+    const uint8_t rx_lsb = static_cast<uint8_t>(rx & 0xFFu);
 
     std::ostringstream oss;
     oss << "LTC5594 CHIPID = 0x" << std::hex << std::uppercase
-        << std::setw(2) << std::setfill('0') << unsigned(chipid);
+            << std::setw(2) << std::setfill('0') << unsigned(chipid)
+            << " (rx=0x" << std::setw(4) << unsigned(rx)
+            << ", msb=0x" << std::setw(2) << unsigned(rx_msb)
+            << ", lsb=0x" << std::setw(2) << unsigned(rx_lsb) << ")";
 
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 }

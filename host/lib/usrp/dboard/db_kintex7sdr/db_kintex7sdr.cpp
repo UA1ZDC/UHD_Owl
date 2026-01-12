@@ -38,7 +38,7 @@ enum spi_dest_t {
 	SPI_DEST_LTC5594 = 0x2, // 0x02: RXLO1, the main RXLO from 400MHz to 6000MHz
 	SPI_DEST_AD7922 = 0x3, // 0x03: RXLO2, the low band mixer RXLO 10MHz to 400MHz
 	SPI_DEST_AD7922_2  = 0x4, // 0x04: CPLD SPI Register
-	SPI_DEST_NONE_3B = 0x7u;
+	SPI_DEST_NONE_3B = 0x7u
 };
 
 /*static const std::array<db_kintex7sdr_rx::gain_profile, 6> KINTEX7SDR_GAIN_TABLE{{
@@ -123,28 +123,29 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
 
     // Минимальный soft reset: записываем 0 в регистр блоков.
     // При необходимости обнови значение согласно своему даташиту.
+    _iface->write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ltc5594::REG_BCTL ) << 8 | 0x08 ), 16);
     //_ltc5594_xfer16(ltc5594::make_word_wr(ltc5594::REG_BCTL, 0xf8));
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
     //_iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
 
-
     //const uint16_t rx = _ltc5594_xfer16(ltc5594::make_word_rd(ltc5594::REG_CHIPID));
-    const uint16_t rx = _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, 0x9100, 16);
-
-    const uint8_t chipid = ltc5594::rx_data_byte(rx);
-    const uint8_t rx_msb = static_cast<uint8_t>(rx >> 8);
-    const uint8_t rx_lsb = static_cast<uint8_t>(rx & 0xFFu);
+    uint16_t rx = _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ( ltc5594::REG_CHIPID | 0x80) << 8 ) ), 16);
+    uint8_t chipid = ltc5594::rx_data_byte(rx);
 
     std::ostringstream oss;
     oss << "LTC5594 CHIPID = 0x" << std::hex << std::uppercase
-            << std::setw(2) << std::setfill('0') << unsigned(chipid)
-            << " (rx=0x" << std::setw(4) << unsigned(rx)
-            << ", msb=0x" << std::setw(2) << unsigned(rx_msb)
-            << ", lsb=0x" << std::setw(2) << unsigned(rx_lsb) << ")";
-
+    		<< std::setw(2) << std::setfill('0') << unsigned(chipid);
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
+    _iface->write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ( ltc5594::REG_BCTL | 0x00) << 8 ) | 0x90 ), 16);
+    rx = _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ( ltc5594::REG_BCTL | 0x80) << 8 ) | 0x00 ), 16);
+    chipid = ltc5594::rx_data_byte(rx);
+
+    oss.str("");
+    oss << "LTC5594 REG_BCTL = 0x" << std::hex << std::uppercase
+    		<< std::setw(2) << std::setfill('0') << unsigned(chipid);
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
@@ -358,7 +359,7 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
         n_div = 1023;
     }
 
-    _program_ltc6948_integer_n(n_div, r_div_u8);
+    //_program_ltc6948_integer_n(n_div, r_div_u8);
 
     _rx_freq = (k_ref_hz * n_div) / r_div_u8;
     return _rx_freq;

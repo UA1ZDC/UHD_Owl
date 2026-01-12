@@ -29,8 +29,8 @@ static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 
 // На большинстве dboard-дизайнов "ничего не выбрано" для 3-битного SPI_ADDR = 0b111.
 // Если в твоём CPLD другое соглашение — поменяй здесь.
-static const uint32_t SPI_DEST_NONE_3B = 0x7u;
-static const uint32_t SPI_DEST_LTC5594 = 0x2;
+//static const uint32_t SPI_DEST_NONE_3B = 0x7u;
+//static const uint32_t SPI_DEST_LTC5594 = 0x2;
 
 enum spi_dest_t {
 	SPI_DEST_CPLD = 0x0, // 0x00: TXLO1, the main TXLO from 400MHz to 6000MHz

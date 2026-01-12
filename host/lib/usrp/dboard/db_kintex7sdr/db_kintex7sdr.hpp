@@ -33,14 +33,13 @@ public:
     double set_rx_frequency(double freq);
     double set_rx_gain(double gain);
 
-    // helper: чтение CHIPID LTC5594 и лог в UHD
-    void log_ltc5594_chip_id();
-
+/*
     struct gain_profile {
         double gain_db;
         uint8_t att1_code;
         uint8_t att2_code;
     };
+*/
 
 private:
     // GPIO fields (минимум нужного сейчас)
@@ -78,36 +77,6 @@ private:
     void _flush_gpio();
 
     // --- SPI helpers (по образцу: route+spi под ОДНИМ mutex) ---
-
-    // SFINAE check: есть ли read_write_spi()
-    template<typename IFACE>
-    static auto _has_readwrite(int) -> decltype(
-        std::declval<IFACE&>().read_write_spi(
-            std::declval<uhd::usrp::dboard_iface::unit_t>(),
-            std::declval<const uhd::spi_config_t&>(),
-            uint32_t{}, size_t{}),
-        std::true_type{});
-
-    template<typename IFACE>
-    static std::false_type _has_readwrite(...);
-
-    // raw xfer (dest уже выставлен, mutex уже взят)
-    uint32_t _spi_xfer_nolock(uint32_t word, size_t nbits, std::true_type);
-    uint32_t _spi_xfer_nolock(uint32_t word, size_t nbits, std::false_type);
-
-    // выставить SPI_ADDR (mutex уже взят)
-    void _set_spi_dest_nolock(uint32_t dest3);
-
-    // публичный для чиповых функций: lock + route + xfer
-    uint32_t _spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits);
-
-    // Chip-level xfers
-    uint32_t _cpld_rd(uint8_t reg7);
-    void     _cpld_wr(uint8_t reg7, uint32_t data24);
-    void     _cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t value);
-    uint16_t _ltc5594_xfer16(uint16_t w);
-    uint16_t _ltc6948_xfer16(uint16_t w);
-    void     _program_ltc6948_integer_n(uint16_t n_div, uint8_t r_div);
 
 private:
     uhd::usrp::dboard_iface::sptr _iface;

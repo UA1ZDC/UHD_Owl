@@ -14,6 +14,11 @@
 
 namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
 
+/***********************************************************************
+ * UBX Constants
+ **********************************************************************/
+//#define fMHz (1000000.0)
+
 // ------------------------------------------------------------------
 // Дефолты (замени под свой тракт/плату)
 // ------------------------------------------------------------------
@@ -27,14 +32,23 @@ static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 static const uint32_t SPI_DEST_NONE_3B = 0x7u;
 static const uint32_t SPI_DEST_LTC5594 = 0x2;
 
-static const std::array<db_kintex7sdr_rx::gain_profile, 6> KINTEX7SDR_GAIN_TABLE{{
+enum spi_dest_t {
+	SPI_DEST_CPLD = 0x0, // 0x00: TXLO1, the main TXLO from 400MHz to 6000MHz
+	SPI_DEST_LTC6948 = 0x1, // 0x01: TXLO2, the low band mixer TXLO 10MHz to 400MHz
+	SPI_DEST_LTC5594 = 0x2, // 0x02: RXLO1, the main RXLO from 400MHz to 6000MHz
+	SPI_DEST_AD7922 = 0x3, // 0x03: RXLO2, the low band mixer RXLO 10MHz to 400MHz
+	SPI_DEST_AD7922_2  = 0x4, // 0x04: CPLD SPI Register
+	SPI_DEST_NONE_3B = 0x7u;
+};
+
+/*static const std::array<db_kintex7sdr_rx::gain_profile, 6> KINTEX7SDR_GAIN_TABLE{{
     {0.0,  0b00, 0x00},
     {6.0,  0b01, 0x10},
     {12.0, 0b10, 0x20},
     {18.0, 0b11, 0x30},
     {24.0, 0b11, 0x40},
     {30.0, 0b11, 0x50},
-}};
+}};*/
 
 // ============================================================================
 // db_kintex7sdr_rx
@@ -60,7 +74,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     _flush_gpio();
 
     // 4) CPLD reset sequence
-    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
     _set_gpio_field(GPIO_CPLD_RST_N, 0);
     _flush_gpio();
 

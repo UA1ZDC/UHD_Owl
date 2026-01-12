@@ -46,6 +46,15 @@ enum reg_t : uint8_t {
     REGE = 0x0E
 };
 
+// Register bit helpers (см. Table 15/16 datasheet)
+static constexpr uint8_t REG3_INTN   = 0x01u;
+static constexpr uint8_t REG3_DITHEN = 0x02u;
+static constexpr uint8_t REG3_DEFAULT = 0x3Eu;
+
+static constexpr uint8_t REG6_RD_SHIFT = 3u; // RD[4:0] -> bits[7:3]
+static constexpr uint8_t REG6_RD_MASK  = 0xF8u;
+static constexpr uint8_t REG6_ND_MSB_MASK = 0x03u; // ND[9:8] -> bits[1:0]
+
 }}}}} // namespace uhd::usrp::dboard::db_kintex7sdr::ltc6948
 
 #endif // UHD_USRP_DBOARD_DB_KINTEX7SDR_LTC6948_REGMAP_HPP

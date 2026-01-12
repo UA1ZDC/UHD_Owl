@@ -1,0 +1,1 @@
+vhdtdtfi -lang verilog -prj CPLD -o C:/Users/yurii/Desktop/ISEProjects/CPLD/regfile_compact.tfi -lib work C:/Users/yurii/Desktop/ISEProjects/CPLD//regfile_compact.v -module regfile_compact -template C:/Xilinx/14.7/ISE_DS/ISE//data/tfi.tft -deleteonerror 

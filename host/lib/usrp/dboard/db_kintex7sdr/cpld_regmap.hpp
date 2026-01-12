@@ -13,9 +13,11 @@ namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr { na
  **********************************************************************/
 enum spi_dest_t : uint8_t {
     SPI_DEST_CPLD    = 0x0,
-    SPI_DEST_LTC5594 = 0x1,
-    SPI_DEST_LTC6948 = 0x2,
-    // 0x3..0x7 reserved
+    SPI_DEST_LTC6948 = 0x1,
+    SPI_DEST_LTC5594 = 0x2,
+	SPI_DEST_AD7922 = 0x3,
+	SPI_DEST_AD7922_2 = 0x4,
+    // 0x5..0x7 reserved
 };
 
 /***********************************************************************
@@ -29,6 +31,11 @@ enum reg_t : uint8_t {
     REG_ATT2_MODE  = 0x03, // mode: auto-latch / direct / etc
     REG_STATUS     = 0x04  // sticky flags / status
 };
+
+// REG_CTRL bit definitions (должны совпадать с regmap_core)
+static constexpr uint32_t CTRL_ATT1_C1  = (1u << 0);
+static constexpr uint32_t CTRL_ATT1_C2  = (1u << 1);
+static constexpr uint32_t CTRL_ATT1_MASK = (CTRL_ATT1_C1 | CTRL_ATT1_C2);
 
 // Упаковка 32-битного слова под наш CPLD SPI engine: [CMD][DATA24]
 // CMD: bit7 = 1 write / 0 read, bits[6:0] = reg

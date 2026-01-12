@@ -12,7 +12,7 @@ NET "*" IOSTANDARD = LVCMOS33;
 NET "SCLK_RX"  LOC = "M2";   # GCK0
 NET "SEN_RX"   LOC = "P2";  # CDRST как I/O, удобно держать неактивным
 NET "MOSI_RX"  LOC = "R1";
-NET "MISO_RX"  LOC = "R2";
+NET "MISO_RX"  LOC = "R2" | PULLUP;
 
 ###############################################################################
 # LTC6948 SPI
@@ -59,24 +59,45 @@ NET "ATT2_MOSI_RX"  LOC = "B15";
 ###############################################################################
 # GPIO cpld_io_00..15
 ###############################################################################
-NET "cpld_io_00" LOC = "M3";
+#NET "cpld_io_00" LOC = "M3";
+#
+#NET "cpld_io_01" LOC = "D2";
+#NET "cpld_io_02" LOC = "E2";
+#NET "cpld_io_03" LOC = "F3";
+#NET "cpld_io_04" LOC = "F2";
+#NET "cpld_io_05" LOC = "G3";
+#NET "cpld_io_06" LOC = "H1";
+#NET "cpld_io_07" LOC = "H2";
+#
+#NET "cpld_io_08" LOC = "L5";
+#NET "cpld_io_09" LOC = "L4";
+#NET "cpld_io_10" LOC = "L3";
+#NET "cpld_io_11" LOC = "M1";
+#NET "cpld_io_12" LOC = "N2";
+#NET "cpld_io_13" LOC = "N1";
+#NET "cpld_io_14" LOC = "N3";
+#NET "cpld_io_15" LOC = "P1";
 
-NET "cpld_io_01" LOC = "D2";
-NET "cpld_io_02" LOC = "E2";
-NET "cpld_io_03" LOC = "F3";
-NET "cpld_io_04" LOC = "F2";
-NET "cpld_io_05" LOC = "G3";
-NET "cpld_io_06" LOC = "H1";
-NET "cpld_io_07" LOC = "H2";
 
-NET "cpld_io_08" LOC = "L5";
-NET "cpld_io_09" LOC = "L4";
-NET "cpld_io_10" LOC = "L3";
-NET "cpld_io_11" LOC = "M1";
-NET "cpld_io_12" LOC = "N2";
-NET "cpld_io_13" LOC = "N1";
-NET "cpld_io_14" LOC = "N3";
-NET "cpld_io_15" LOC = "P1";
+NET "CPLD_i[0]" LOC = "M3";
+
+NET "CPLD_i[1]" LOC = "D2";
+NET "CPLD_i[2]" LOC = "E2";
+NET "CPLD_i[3]" LOC = "F3";
+NET "CPLD_i[4]" LOC = "F2";
+NET "CPLD_i[5]" LOC = "G3";
+NET "CPLD_i[6]" LOC = "H1";
+NET "CPLD_i[7]" LOC = "H2";
+
+NET "CPLD_i[8]" LOC = "L5";
+NET "CPLD_i[9]" LOC = "L4";
+NET "CPLD_i[10]" LOC = "L3";
+NET "CPLD_i[11]" LOC = "M1";
+NET "CPLD_i[12]" LOC = "N2";
+NET "CPLD_i[13]" LOC = "N1";
+NET "CPLD_i[14]" LOC = "N3";
+NET "CPLD_i[15]" LOC = "P1";
+
 
 ###############################################################################
 # LED / Power enable
@@ -95,5 +116,5 @@ NET "TPS_EN" LOC = "K16";
 ###############################################################################
 # (Опционально) тайминг на SCLK_RX, если хочешь тайминговые отчёты:
 ###############################################################################
-NET "SCLK_RX" TNM_NET = "TN_SCLK_RX";
-TIMESPEC "TS_SCLK_RX" = PERIOD "TN_SCLK_RX" 100 ns HIGH 50%;
+#NET "SCLK_RX" TNM_NET = "TN_SCLK_RX";
+#TIMESPEC "TS_SCLK_RX" = PERIOD "TN_SCLK_RX" 100 ns HIGH 50%;

@@ -36,13 +36,11 @@ module regmap_core #(
 
     input  wire       STAT_LTC6948,
 
-    input  wire cpld_io_00, input  wire cpld_io_01, input  wire cpld_io_02, input  wire cpld_io_03,
-    input  wire cpld_io_04, input  wire cpld_io_05, input  wire cpld_io_06, input  wire cpld_io_07,
-    input  wire cpld_io_08, input  wire cpld_io_09, input  wire cpld_io_10, input  wire cpld_io_11,
-    input  wire cpld_io_12, input  wire cpld_io_13, input  wire cpld_io_14, input  wire cpld_io_15,
+    input  wire [15:0] cpld_i,
 
     output wire TPS_EN,
     output wire LED_RX,
+	 
     output wire ATT1_RX_C1,
     output wire ATT1_RX_C2,
 
@@ -109,8 +107,8 @@ module regmap_core #(
 
     wire cmd_addr_valid = impl_fn(cmd_bank, cmd_reg);
 
-    wire [7:0] gpio0_now = {cpld_io_07,cpld_io_06,cpld_io_05,cpld_io_04,cpld_io_03,cpld_io_02,cpld_io_01,cpld_io_00};
-    wire [7:0] gpio1_now = {cpld_io_15,cpld_io_14,cpld_io_13,cpld_io_12,cpld_io_11,cpld_io_10,cpld_io_09,cpld_io_08};
+    wire [7:0] gpio0_now = cpld_i[7:0];
+    wire [7:0] gpio1_now = cpld_i[15:8];
 
     // regfile
     wire [23:0] rf_rd_data;

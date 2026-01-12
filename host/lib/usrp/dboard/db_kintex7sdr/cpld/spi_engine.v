@@ -23,11 +23,15 @@ module spi_engine #(
     input  wire       cs_n,       // active-low CS
     input  wire       mosi,
 
+    output wire        miso_o,
+    output wire        miso_oe,
+
     input  wire [2:0] spi_addr,   // ASYNC from FPGA GPIO (stable around CS edges)
+	 input  wire [2:0] sel_latched,
 
     input  wire [23:0] rd_word_in,
 
-    output wire        cs_active,
+    //output wire        cs_active,
     output reg  [5:0]  bitcnt,
 
     output wire        evt_cmd_end,
@@ -41,18 +45,14 @@ module spi_engine #(
 
     output wire [23:0] wr_data_full,
 
-    output reg  [2:0]  sel_latched,
-    output wire        sel_is_cpld,
+    input wire        sel_is_cpld,
     output reg         err_invalid_sel,
 
-    input  wire        clr_err_invalid_sel_evt,
-
-    output wire        miso_o,
-    output wire        miso_oe
+    input  wire        clr_err_invalid_sel_evt
 );
 
-    assign cs_active   = ~cs_n;
-    assign sel_is_cpld = (sel_latched == CPLD_DEST);
+    wire cs_active   = ~cs_n;
+    //assign sel_is_cpld = (sel_latched == CPLD_DEST);
 
     // CMD end is naturally a pulse because bitcnt increments past 7.
     assign evt_cmd_end = cs_active && (bitcnt == 6'd7);
@@ -100,17 +100,11 @@ module spi_engine #(
         is_write_lat    = 1'b0;
         bank_lat        = 3'd0;
         reg_lat         = 4'd0;
-        sel_latched     = CPLD_DEST;
+        //sel_latched     = CPLD_DEST;
         err_invalid_sel = 1'b0;
         rd_word_lat     = 24'd0;
         miso_bit_reg    = 1'b0;
         frame_end_seen  = 1'b0;
-    end
-
-    // Latch selector on CS falling edge (start of transaction)
-    always @(negedge cs_n) begin
-        sel_latched <= spi_addr;
-        // err_invalid_sel is sticky (cleared only by soft reset event)
     end
 
     // Main SPI sampling

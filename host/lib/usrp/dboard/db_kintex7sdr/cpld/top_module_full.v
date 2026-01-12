@@ -80,15 +80,20 @@ module top_module_full #(
     // --------------------------------------------------------------------
     wire [2:0] spi_addr_from_gpio = CPLD_i[2:0];
 	 
-	 wire arst = CPLD_i[3];
+	 wire arstn = CPLD_i[3];
 	 
 	reg [2:0] sel_latched = DEST_NONE;
-	 
-	     // Latch selector on CS falling edge (start of transaction)
-    always @(negedge SEN_RX) begin
-	  sel_latched <= arst ? DEST_NONE : spi_addr_from_gpio;
-        // err_invalid_sel is sticky (cleared only by soft reset event)
-    end
+	reg invalid_sel = 1'b0; 
+	
+	// Лочим селектор по спаду CS (SEN_RX), асинхронный сброс по arstn (active-low)
+	always @(negedge SEN_RX or negedge arstn) begin
+	  if (!arstn) begin
+		 sel_latched <= DEST_NONE;     // значение при сбросе
+		 invalid_sel <= 1'b0;   // если нужно очищать по сбросу
+	  end else begin
+		 sel_latched <= spi_addr_from_gpio;
+	  end
+	end
 	
 	wire SCLK_CPLD, SEN_CPLD, MOSI_CPLD, MISO_CPLD;
 	
@@ -98,6 +103,18 @@ module top_module_full #(
 	wire sel_5594     = (sel_latched == DEST_LTC5594);
 	wire sel_ad7922   = (sel_latched == DEST_AD7922);
 	wire sel_ad7922_2 = (sel_latched == DEST_AD7922_2);
+	
+	always @* begin
+		case(sel_latched)
+			CPLD_DEST : begin invalid_sel = 1'b0; end
+			DEST_LTC6948 : begin invalid_sel = 1'b0; end
+			DEST_LTC5594 : begin invalid_sel = 1'b0; end
+			DEST_AD7922 : begin invalid_sel = 1'b0; end
+			DEST_AD7922_2 : begin invalid_sel = 1'b0; end
+			DEST_NONE : begin invalid_sel = 1'b0; end
+			default : begin invalid_sel = 1'b1; end
+		endcase
+	end
 
 	// что считается "неактивным" для SEN/CS (обычно 1, если активный низ)
 	localparam CS_INACTIVE = 1'b1;

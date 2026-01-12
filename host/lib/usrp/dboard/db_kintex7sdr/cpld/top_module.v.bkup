@@ -77,6 +77,7 @@ module top_module #(
     output wire TPS_EN
 );
 
+
     // --------------------------------------------------------------------
     // SPI_ADDR derived from GPIO pins (as in your UHD driver gpio map)
     // --------------------------------------------------------------------
@@ -106,6 +107,9 @@ module top_module #(
 
     wire        miso_o;
     wire        miso_oe;
+	 
+	 assign sel_latched = spi_addr_from_gpio;
+	 
 
   // --------------------------------------------------------------------
     // Transparent SPI routing to external devices (by sel_latched)
@@ -172,8 +176,8 @@ module top_module #(
                      1'bZ;
 
 
-	assign LED_RX = 1'b1;
-	assign TPS_EN = 1'b0;
+	assign LED_RX = sel_latched[0];
+	assign TPS_EN = sel_latched[1];
 
 endmodule
 

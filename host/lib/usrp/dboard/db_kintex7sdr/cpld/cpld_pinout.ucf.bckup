@@ -10,23 +10,23 @@ NET "*" IOSTANDARD = LVCMOS33;
 # RX SPI (master -> CPLD)
 ###############################################################################
 NET "SCLK_RX"  LOC = "M2";   # GCK0
-NET "SEN_RX"   LOC = "P2";  # CDRST как I/O, удобно держать неактивным
+NET "SEN_RX"   LOC = "P2" | PULLUP;  # CDRST как I/O, удобно держать неактивным
 NET "MOSI_RX"  LOC = "R1";
-NET "MISO_RX"  LOC = "R2";
+NET "MISO_RX"  LOC = "R2" | PULLUP;
 
 ###############################################################################
 # LTC6948 SPI
 ###############################################################################
 NET "SCLK_LTC6948"  LOC = "T3";
 NET "MOSI_LTC6948"  LOC = "R4";
-NET "CS_LTC6948"    LOC = "T4";
-NET "MISO_LTC6948"  LOC = "T1";
-NET "STAT_LTC6948"  LOC = "T6";
+NET "CS_LTC6948"    LOC = "T4" | PULLUP;
+NET "MISO_LTC6948"  LOC = "T1" | PULLUP;
+NET "STAT_LTC6948"  LOC = "T6" | PULLUP;
 
 ###############################################################################
 # LTC5594
 ###############################################################################
-NET "SEN_LTC5594"   LOC = "B6";
+NET "SEN_LTC5594"   LOC = "B6" | PULLUP;
 NET "SCLK_LTC5594"  LOC = "C1";
 NET "MOSI_LTC5594"  LOC = "B2";
 NET "MISO_LTC5594"  LOC = "B1" | PULLUP;

@@ -181,8 +181,8 @@ module top_module_full #(
         .cpld_io_08(cpld_io_08), .cpld_io_09(cpld_io_09), .cpld_io_10(cpld_io_10), .cpld_io_11(cpld_io_11),
         .cpld_io_12(cpld_io_12), .cpld_io_13(cpld_io_13), .cpld_io_14(cpld_io_14), .cpld_io_15(cpld_io_15),
 
-        .TPS_EN         (TPS_EN),
-        .LED_RX         (LED_RX),
+        //.TPS_EN         (TPS_EN),
+        //.LED_RX         (LED_RX),
 
         .ATT1_RX_C1     (ATT1_RX_C1),
         .ATT1_RX_C2     (ATT1_RX_C2),
@@ -258,6 +258,11 @@ module top_module_full #(
     assign MISO_RX = miso_oe     ? miso_o      :
                      ext_miso_oe ? ext_miso_val :
                      1'bZ;
+							
+							
+							
+	 assign TPS_EN = sel_ltc5594;
+    assign LED_RX = en_ltc5594;
 
 endmodule
 

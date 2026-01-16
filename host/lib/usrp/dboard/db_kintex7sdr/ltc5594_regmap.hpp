@@ -10,8 +10,8 @@ namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr { na
  *  - First byte: MSB is R/W, lower 7 bits = address
  *  - Second byte: data (or dummy for reads)
  **********************************************************************/
-static inline uint16_t make_addr_byte_wr(uint8_t addr7) { return uint16_t(0x80u | (addr7 & 0x7Fu)); }
-static inline uint16_t make_addr_byte_rd(uint8_t addr7) { return uint16_t((addr7 & 0x7Fu)); }
+static inline uint16_t make_addr_byte_rd(uint8_t addr7) { return uint16_t(0x80u | (addr7 & 0x7Fu)); }
+static inline uint16_t make_addr_byte_wr(uint8_t addr7) { return uint16_t((addr7 & 0x7Fu)); }
 
 static inline uint16_t make_word_wr(uint8_t addr7, uint8_t data)
 {

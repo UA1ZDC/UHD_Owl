@@ -114,38 +114,25 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
         get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
     }
 
-    // 6) Быстрый sanity-check: попробуем прочитать CHIPID LTC5594
-    // (будет работать только если в твоём UHD есть read_write_spi и SDO подключен)
-    //_set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_LTC5594);
-    //_flush_gpio();
 
-    //_iface->set_gpio_out(uhd::usrp::dboard_iface::UNIT_RX, 0x02, 0x0f);
+    _spi_xfer_to(SPI_DEST_LTC5594,ltc5594::make_word_wr(ltc5594::REG_BCTL,0x08),16);
 
-    // Минимальный soft reset: записываем 0 в регистр блоков.
-    // При необходимости обнови значение согласно своему даташиту.
-    // _iface->write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ltc5594::REG_BCTL ) << 8 | 0x08 ), 16);
-    _spi_xfer_to(SPI_DEST_LTC5594,uint16_t( ( ltc5594::REG_BCTL ) << 8 | 0x08 ),16);
-    //_ltc5594_xfer16(ltc5594::make_word_wr(ltc5594::REG_BCTL, 0xf8));
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-    //_iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
-
-    //const uint16_t rx = _ltc5594_xfer16(ltc5594::make_word_rd(ltc5594::REG_CHIPID));
-    uint16_t rx = _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ( ltc5594::REG_CHIPID | 0x80) << 8 ) ), 16);
-    uint8_t chipid = ltc5594::rx_data_byte(rx);
+    uint16_t rx = _spi_xfer_to(SPI_DEST_LTC5594,ltc5594::make_word_rd(ltc5594::REG_CHIPID), 16);
 
     std::ostringstream oss;
     oss << "LTC5594 CHIPID = 0x" << std::hex << std::uppercase
-    		<< std::setw(2) << std::setfill('0') << unsigned(chipid);
+    		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
-    _iface->write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ( ltc5594::REG_BCTL | 0x00) << 8 ) | 0x90 ), 16);
-    rx = _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ( ltc5594::REG_BCTL | 0x80) << 8 ) | 0x00 ), 16);
-    chipid = ltc5594::rx_data_byte(rx);
+    _spi_xfer_to(SPI_DEST_LTC5594,ltc5594::make_word_wr(ltc5594::REG_BCTL, uint8_t( ltc5594::bctl::BIT_EAMP | ltc5594::bctl::BIT_EDEM  \
+    		| ltc5594::bctl::BIT_EDC ) ), 16);
+    rx = _spi_xfer_to(SPI_DEST_LTC5594,ltc5594::make_word_rd(ltc5594::REG_BCTL), 16);
 
     oss.str("");
     oss << "LTC5594 REG_BCTL = 0x" << std::hex << std::uppercase
-    		<< std::setw(2) << std::setfill('0') << unsigned(chipid);
+    		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 }
 
@@ -242,13 +229,11 @@ void db_kintex7sdr_rx::_flush_gpio()
 //   Именно так сделано в образце (ROUTE_SPI + WRITE_SPI внутри lock).
 // ============================================================================
 
-uint32_t db_kintex7sdr_rx::_spi_xfer_nolock(uint32_t word, size_t nbits)
-{
-    return _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
-}
 
-void db_kintex7sdr_rx::_set_spi_dest_nolock(uint32_t dest3)
+uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits)
 {
+    std::lock_guard<std::mutex> lock(_spi_mutex);
+
     dest3 &= 0x7u;
     if (!_spi_dest_valid || _spi_dest3 != dest3) {
         _set_gpio_field(GPIO_SPI_ADDR, dest3);
@@ -256,16 +241,8 @@ void db_kintex7sdr_rx::_set_spi_dest_nolock(uint32_t dest3)
         _spi_dest3 = dest3;
         _spi_dest_valid = true;
     }
-}
 
-uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits)
-{
-    std::lock_guard<std::mutex> lock(_spi_mutex);
-
-    // 1) route
-    _set_spi_dest_nolock(dest3);
-
-    return _spi_xfer_nolock(word, nbits);
+    return _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
 }
 
 

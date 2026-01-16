@@ -93,6 +93,9 @@ private:
     bool _spi_dest_valid{false};
     uint32_t _spi_dest3{0};
 
+    // публичный для чиповых функций: lock + route + xfer
+    uint32_t _spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits);
+
     double _rx_freq;
     double _rx_gain;
 };

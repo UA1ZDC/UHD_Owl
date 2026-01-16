@@ -98,6 +98,9 @@ private:
 
     double _rx_freq;
     double _rx_gain;
+
+    const double _PFD_freq = 50e6;
+    const double _REF_freq = ( _PFD_freq * 2.0 );
 };
 
 }}}} // namespace uhd::usrp::dboard::db_kintex7sdr

@@ -134,6 +134,18 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     oss << "LTC5594 REG_BCTL = 0x" << std::hex << std::uppercase
     		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
+
+
+    _iface->get_clock_rate(dboard_iface::UNIT_RX);
+
+    try {
+    	_iface->set_clock_rate(dboard_iface::UNIT_RX, _REF_freq);
+    } catch (const uhd::not_implemented_error&) {
+    	UHD_LOG_WARNING(
+    			"KINTEX7SDR", "Unable to set dboard clock rate - phase will vary");
+    }
+
+    _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
@@ -338,7 +350,7 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
     constexpr double k_min_freq = 300e6;
     constexpr double k_max_freq = 2200e6;
     constexpr double k_step_hz = 1e6;
-    constexpr double k_ref_hz = 100e6;
+    constexpr double k_ref_hz = _REF_freq;
     constexpr double k_nd_min = 32.0;
 
     if (freq < k_min_freq) {

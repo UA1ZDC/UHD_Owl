@@ -73,46 +73,14 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     _set_gpio_field(GPIO_CPLD_RST_N, 0);
     _flush_gpio();
 
+    // bring CPLD out of reset
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(20)); // hold CPLD reset for minimum of 20 ms
+
     // 4) CPLD reset sequence
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     _set_gpio_field(GPIO_CPLD_RST_N, 1);
     _flush_gpio();
-
-    // Дай железу чуть времени выйти в рабочий режим (особенно если SPI через CPLD)
-
-    // 5) Регистрируем UHD properties (как в образце), чтобы UHD реально вызывал наши coercers
-    {
-        using namespace std::placeholders;
-
-        get_rx_subtree()->create<std::string>("name").set("DB_KINTEX7SDR RX");
-
-        get_rx_subtree()
-            ->create<double>("freq/value")
-            .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_frequency, this, _1))
-            .set(KINTEX7SDR_RX_FREQ_RANGE.start());
-        get_rx_subtree()->create<uhd::meta_range_t>("freq/range").set(KINTEX7SDR_RX_FREQ_RANGE);
-
-        get_rx_subtree()
-            ->create<double>("gains/PGA0/value")
-            .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_gain, this, _1))
-            .set(0.0);
-        get_rx_subtree()->create<uhd::meta_range_t>("gains/PGA0/range").set(KINTEX7SDR_RX_GAIN_RANGE);
-
-        get_rx_subtree()
-            ->create<std::string>("antenna/value")
-            .set(KINTEX7SDR_RX_ANTENNAS.at(0));
-        get_rx_subtree()
-            ->create<std::vector<std::string>>("antenna/options")
-            .set(KINTEX7SDR_RX_ANTENNAS);
-
-
-        get_rx_subtree()->create<std::string>("connection").set("IQ");
-        get_rx_subtree()->create<bool>("enabled").set(true);
-
-        // bandwidth пока фиксированная заглушка (подставь реальную полосу тракта)
-        get_rx_subtree()->create<double>("bandwidth/value").set(KINTEX7SDR_RX_BW_RANGE.start());
-        get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
-    }
 
 
     _spi_xfer_to(SPI_DEST_LTC5594,ltc5594::make_word_wr(ltc5594::REG_BCTL,0x08),16);
@@ -146,6 +114,40 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     }
 
     _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
+
+    //Регистрируем UHD properties
+    {
+        using namespace std::placeholders;
+
+        get_rx_subtree()->create<std::string>("name").set("DB_KINTEX7SDR RX");
+
+        get_rx_subtree()
+            ->create<double>("freq/value")
+            .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_frequency, this, _1))
+            .set(KINTEX7SDR_RX_FREQ_RANGE.start());
+        get_rx_subtree()->create<uhd::meta_range_t>("freq/range").set(KINTEX7SDR_RX_FREQ_RANGE);
+
+        get_rx_subtree()
+            ->create<double>("gains/PGA0/value")
+            .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_gain, this, _1))
+            .set(0.0);
+        get_rx_subtree()->create<uhd::meta_range_t>("gains/PGA0/range").set(KINTEX7SDR_RX_GAIN_RANGE);
+
+        get_rx_subtree()
+            ->create<std::string>("antenna/value")
+            .set(KINTEX7SDR_RX_ANTENNAS.at(0));
+        get_rx_subtree()
+            ->create<std::vector<std::string>>("antenna/options")
+            .set(KINTEX7SDR_RX_ANTENNAS);
+
+
+        get_rx_subtree()->create<std::string>("connection").set("IQ");
+        get_rx_subtree()->create<bool>("enabled").set(true);
+
+        // bandwidth пока фиксированная заглушка (подставь реальную полосу тракта)
+        get_rx_subtree()->create<double>("bandwidth/value").set(KINTEX7SDR_RX_BW_RANGE.start());
+        get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
+    }
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)

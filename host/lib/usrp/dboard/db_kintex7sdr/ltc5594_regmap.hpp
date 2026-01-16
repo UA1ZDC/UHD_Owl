@@ -63,9 +63,9 @@ enum reg_t : uint8_t {
 namespace bctl {
     // REG_BCTL (0x16) — enable/disable blocks (имена из таблицы)
     static const uint8_t BIT_EDEM = (1u << 7);
-    static const uint8_t BIT_EAMP = (1u << 6); // IF AMP enable
-    static const uint8_t BIT_EDC  = (1u << 5);
-    static const uint8_t BIT_EADJ = (1u << 4);
+    static const uint8_t BIT_EAMP = (1u << 4); // IF AMP enable
+    static const uint8_t BIT_EDC  = (1u << 6);
+    static const uint8_t BIT_EADJ = (1u << 5);
     // Остальные биты оставь как есть (board defaults)
 }
 

@@ -103,20 +103,6 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
-    try {
-    	_iface->set_clock_rate(dboard_iface::UNIT_RX, _REF_freq);
-    } catch (const uhd::not_implemented_error&) {
-    	UHD_LOG_WARNING(
-    			"KINTEX7SDR_RX", "Unable to set dboard clock rate - phase will vary");
-    }
-
-    double clock_rate = _iface->get_clock_rate(dboard_iface::UNIT_RX);
-    oss.str("");
-    oss << "UNIT_RX REF clock frequency: "  << std::fixed << std::setprecision(1) << double(clock_rate/fMHz) << "MHz";
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
-
-    _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
-
     //Регистрируем UHD properties
     {
         using namespace std::placeholders;
@@ -146,10 +132,24 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
         get_rx_subtree()->create<std::string>("connection").set("IQ");
         get_rx_subtree()->create<bool>("enabled").set(true);
 
-        // bandwidth пока фиксированная заглушка (подставь реальную полосу тракта)
+        get_rx_subtree()->create<bool>("use_lo_offset").set(false);
         get_rx_subtree()->create<double>("bandwidth/value").set(KINTEX7SDR_RX_BW_RANGE.start());
         get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
     }
+
+    try {
+    	_iface->set_clock_rate(dboard_iface::UNIT_RX, _REF_freq);
+    } catch (const uhd::not_implemented_error&) {
+    	UHD_LOG_WARNING(
+    			"KINTEX7SDR_RX", "Unable to set dboard clock rate - phase will vary");
+    }
+
+    double clock_rate = _iface->get_clock_rate(dboard_iface::UNIT_RX);
+    oss.str("");
+    oss << "UNIT_RX REF clock frequency: "  << std::fixed << std::setprecision(1) << double(clock_rate/fMHz) << "MHz";
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
+
+    _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)

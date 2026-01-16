@@ -116,14 +116,15 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
 
     // 6) Быстрый sanity-check: попробуем прочитать CHIPID LTC5594
     // (будет работать только если в твоём UHD есть read_write_spi и SDO подключен)
-    _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_LTC5594);
-    _flush_gpio();
+    //_set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_LTC5594);
+    //_flush_gpio();
 
     //_iface->set_gpio_out(uhd::usrp::dboard_iface::UNIT_RX, 0x02, 0x0f);
 
     // Минимальный soft reset: записываем 0 в регистр блоков.
     // При необходимости обнови значение согласно своему даташиту.
-    _iface->write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ltc5594::REG_BCTL ) << 8 | 0x08 ), 16);
+    // _iface->write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, uint16_t( ( ltc5594::REG_BCTL ) << 8 | 0x08 ), 16);
+    _spi_xfer_to(SPI_DEST_LTC5594,uint16_t( ( ltc5594::REG_BCTL ) << 8 | 0x08 ),16);
     //_ltc5594_xfer16(ltc5594::make_word_wr(ltc5594::REG_BCTL, 0xf8));
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
@@ -232,6 +233,39 @@ void db_kintex7sdr_rx::_flush_gpio()
         _rx_gpio.dirty = false;
         _rx_gpio.mask  = 0;
     }
+}
+
+// ============================================================================
+// SPI helpers (ключевая правка относительно твоей текущей версии)
+//   ВАЖНО: route (SPI_ADDR) и сама SPI транзакция должны быть под ОДНИМ mutex,
+//   иначе два потока могут перемешать dest и послать слово "не туда".
+//   Именно так сделано в образце (ROUTE_SPI + WRITE_SPI внутри lock).
+// ============================================================================
+
+uint32_t db_kintex7sdr_rx::_spi_xfer_nolock(uint32_t word, size_t nbits)
+{
+    return _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
+}
+
+void db_kintex7sdr_rx::_set_spi_dest_nolock(uint32_t dest3)
+{
+    dest3 &= 0x7u;
+    if (!_spi_dest_valid || _spi_dest3 != dest3) {
+        _set_gpio_field(GPIO_SPI_ADDR, dest3);
+        _flush_gpio();
+        _spi_dest3 = dest3;
+        _spi_dest_valid = true;
+    }
+}
+
+uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits)
+{
+    std::lock_guard<std::mutex> lock(_spi_mutex);
+
+    // 1) route
+    _set_spi_dest_nolock(dest3);
+
+    return _spi_xfer_nolock(word, nbits);
 }
 
 

@@ -1,9 +1,9 @@
 <?xml version='1.0' encoding='UTF-8'?>
 <report-views version="2.0" >
  <header>
-  <DateModified>2026-01-12T21:10:04</DateModified>
+  <DateModified>2026-01-17T18:46:14</DateModified>
   <ModuleName>top_module_full</ModuleName>
-  <SummaryTimeStamp>2026-01-12T21:08:22</SummaryTimeStamp>
+  <SummaryTimeStamp>2026-01-17T16:20:10</SummaryTimeStamp>
   <SavedFilePath>C:/GitHub/UHD_Owl/host/lib/usrp/dboard/db_kintex7sdr/cpld/iseconfig/top_module_full.xreport</SavedFilePath>
   <ImplementationReportsDirectory>C:/GitHub/UHD_Owl/host/lib/usrp/dboard/db_kintex7sdr/cpld\</ImplementationReportsDirectory>
   <DateInitialized>2026-01-12T11:57:56</DateInitialized>

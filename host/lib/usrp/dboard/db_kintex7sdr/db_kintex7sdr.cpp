@@ -150,6 +150,44 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
     _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
+    //_iface->set_clock_enabled(dboard_iface::UNIT_TX, true);
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x02 << 1) << 8) | 0x01, 16);
+
+    // bring CPLD out of reset
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(5));
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x02 << 1) << 8) | 0x00, 16);
+
+    rx = _spi_xfer_to(SPI_DEST_LTC6948, (((0x02 << 1) | 0x01 ) << 8), 16);
+
+    oss.str("");
+    oss << "LTC6948 REG 02h = 0x" << std::hex << std::uppercase
+    		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x01 << 1) << 8) | (1 << 2), 16); //STATUS = LOCK
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x03 << 1) << 8) | 0x3f, 16);
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0d << 1) << 8) | 0xc0, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x04 << 1) << 8) | 0x46, 16);
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x06 << 1) << 8) | 0x10, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x07 << 1) << 8) | 0x36, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x08 << 1) << 8) | 0x00, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x09 << 1) << 8) | 0x00, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0b << 1) << 8) | 0x9E, 16);
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0a << 1) << 8) | 0x01, 16);
+
+    rx = _spi_xfer_to(SPI_DEST_LTC6948, (((0x02 << 1) | 0x01 ) << 8), 16);
+
+    oss.str("");
+    oss << "LTC6948 REG 0dh = 0x" << std::hex << std::uppercase
+    		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)

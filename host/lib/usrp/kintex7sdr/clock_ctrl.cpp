@@ -83,7 +83,7 @@ public:
             case kintex7sdr_iface::USRP_N210_XK:
                 _ad9516_regs.power_down_lvds_cmos_out6 = enb ? 0 : 1;
                 _ad9516_regs.lvds_cmos_select_out6 = ad9516_regs_t::LVDS_CMOS_SELECT_OUT6_LVDS;
-                _ad9516_regs.output_level_lvds_out6 = ad9516_regs_t::OUTPUT_LEVEL_LVDS_OUT6_1_75MA;
+                _ad9516_regs.output_level_lvds_out6 = ad9516_regs_t::OUTPUT_LEVEL_LVDS_OUT6_5_25MA;
                 this->write_reg(clk_regs.output(clk_regs.rx_db));
                 break;
             case kintex7sdr_iface::USRP_N210_XA:
@@ -141,7 +141,7 @@ public:
             case kintex7sdr_iface::USRP_N210_XK:
                 _ad9516_regs.power_down_lvds_cmos_out7 = enb ? 0 : 1;
                 _ad9516_regs.lvds_cmos_select_out7 = ad9516_regs_t::LVDS_CMOS_SELECT_OUT7_LVDS;
-                _ad9516_regs.output_level_lvds_out7 = ad9516_regs_t::OUTPUT_LEVEL_LVDS_OUT7_1_75MA;
+                _ad9516_regs.output_level_lvds_out7 = ad9516_regs_t::OUTPUT_LEVEL_LVDS_OUT7_5_25MA;
                 break;
             case kintex7sdr_iface::USRP_N210_XA:
                 _ad9516_regs.power_down_lvds_cmos_out7 = enb ? 0 : 1;

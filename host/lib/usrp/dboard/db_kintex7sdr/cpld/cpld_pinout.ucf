@@ -17,8 +17,8 @@ NET "MISO_RX"  LOC = "R2" | PULLUP;
 ###############################################################################
 # LTC6948 SPI
 ###############################################################################
-NET "SCLK_LTC6948"  LOC = "T3";
-NET "MOSI_LTC6948"  LOC = "R4";
+NET "SCLK_LTC6948"  LOC = "R4";
+NET "MOSI_LTC6948"  LOC = "T3";
 NET "CS_LTC6948"    LOC = "T4";
 NET "MISO_LTC6948"  LOC = "T1";
 NET "STAT_LTC6948"  LOC = "T6";

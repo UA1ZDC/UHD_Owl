@@ -265,7 +265,7 @@ module top_module_full #(
     );
 	 
 	 
-	 assign TPS_EN = (sel_latched == DEST_LTC5594);
+	 assign TPS_EN = (sel_latched == DEST_LTC6948);
     assign LED_RX = (sel_latched == DEST_NONE);
 
 

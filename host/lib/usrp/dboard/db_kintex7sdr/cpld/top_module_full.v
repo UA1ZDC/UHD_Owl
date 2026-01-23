@@ -67,8 +67,9 @@ module top_module_full #(
     output wire ATT2_MOSI_RX,
 
     // GPIO cpld_io_00..15
-	 input wire [15:0] CPLD_i,
-
+	 input 	wire [15:0] CPLD_i,
+	 output 	wire [15:0] CPLD_o,
+	
     // LED / Power enable
     output wire LED_RX,
     output wire TPS_EN
@@ -265,8 +266,10 @@ module top_module_full #(
     );
 	 
 	 
-	 assign TPS_EN = (sel_latched == DEST_LTC6948);
-    assign LED_RX = (sel_latched == DEST_NONE);
+	 assign TPS_EN = STAT_LTC6948;
+    assign LED_RX = CPLD_i[5];
+	 
+	 assign CPLD_o[4] = STAT_LTC6948;
 
 
 endmodule

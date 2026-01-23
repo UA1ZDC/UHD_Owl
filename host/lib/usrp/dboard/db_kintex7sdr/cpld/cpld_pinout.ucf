@@ -84,7 +84,10 @@ NET "CPLD_i[0]" LOC = "M3";
 NET "CPLD_i[1]" LOC = "D2";
 NET "CPLD_i[2]" LOC = "E2";
 NET "CPLD_i[3]" LOC = "F3";
-NET "CPLD_i[4]" LOC = "F2";
+
+//NET "CPLD_i[4]" LOC = "F2";
+NET "CPLD_o[4]" LOC = "F2";	//RX_LO_locked
+
 NET "CPLD_i[5]" LOC = "G3";
 NET "CPLD_i[6]" LOC = "H1";
 NET "CPLD_i[7]" LOC = "H2";

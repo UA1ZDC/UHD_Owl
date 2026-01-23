@@ -176,11 +176,14 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
 
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x06 << 1) << 8) | 0x10, 16);
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x07 << 1) << 8) | 0x36, 16);
+
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x08 << 1) << 8) | 0x00, 16);
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x09 << 1) << 8) | 0x00, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0a << 1) << 8) | 0x01, 16);
+
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x0b << 1) << 8) | 0x9E, 16);
 
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0a << 1) << 8) | 0x01, 16);
+
 
     rx = _spi_xfer_to(SPI_DEST_LTC6948, (((0x02 << 1) | 0x01 ) << 8), 16);
 
@@ -188,6 +191,15 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     oss << "LTC6948 REG 0dh = 0x" << std::hex << std::uppercase
     		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x03 << 1) << 8) | 0x3e, 16); //(INTN=0; было 0x3F в integer)
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x06 << 1) << 8) | 0x10, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x07 << 1) << 8) | 0x33, 16);
+
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x08 << 1) << 8) | 0x3d, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x09 << 1) << 8) | 0x70, 16);
+    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0a << 1) << 8) | 0xa3, 16);
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)

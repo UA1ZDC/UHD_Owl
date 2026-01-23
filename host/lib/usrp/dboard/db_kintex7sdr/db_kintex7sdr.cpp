@@ -3,6 +3,8 @@
 #include <uhd/usrp/dboard_manager.hpp>
 #include <uhd/utils/static.hpp>
 
+#include <uhd/types/sensors.hpp>
+
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -56,7 +58,7 @@ db_kintex7sdr_rx::gpio_field_info = {{
 	{db_kintex7sdr_rx::GPIO_SPI_ADDR,		uhd::usrp::dboard_iface::UNIT_RX,	0,	0x7u << 0,	3,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	false,	0,	0,	0,	0	},
     {db_kintex7sdr_rx::GPIO_CPLD_RST_N,		uhd::usrp::dboard_iface::UNIT_RX,	3,	0x1u << 3,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	false,	0,	0,	0,	0	},
 	{db_kintex7sdr_rx::RX_LO_LOCKED,		uhd::usrp::dboard_iface::UNIT_RX,	4,	0x1u << 4,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_INPUT,	false,	0,	0,	0,	0	},
-	{db_kintex7sdr_rx::RX_EN,				uhd::usrp::dboard_iface::UNIT_RX,	5,	0x1u << 5,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	true,	1,	0,	1,	0	},
+	{db_kintex7sdr_rx::RX_EN,				uhd::usrp::dboard_iface::UNIT_RX,	5,	0x1u << 5,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	true,	0,	0,	1,	0	},
 	{db_kintex7sdr_rx::TPS_EN,				uhd::usrp::dboard_iface::UNIT_RX,	6,	0x1u << 6,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	false,	0,	0,	0,	0	}
 }};
 
@@ -64,7 +66,7 @@ db_kintex7sdr_rx::gpio_field_info = {{
 // db_kintex7sdr_rx
 // ============================================================================
 
-db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
+db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     : uhd::usrp::rx_dboard_base(args)
     , _iface(get_iface())
     , _spi_cfg(uhd::spi_config_t::EDGE_RISE)
@@ -75,27 +77,22 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     // 1) Описываем GPIO-поля и собираем DDR
     _init_gpio_map();
 
-    // 2) Применяем DDR: 1 = FPGA drives pin (т.е. это "выход" со стороны USRP/FPGA)
-    _iface->set_gpio_ddr(uhd::usrp::dboard_iface::UNIT_RX, _rx_gpio.ddr);
+    // Set direction of GPIO pins (1 is input to UBX, 0 is output)
+    _iface->set_gpio_ddr(dboard_iface::UNIT_RX, _rx_gpio.ddr);
 
     // 3) Безопасные дефолты
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
     _set_gpio_field(GPIO_CPLD_RST_N, 0);
     _flush_gpio();
 
-
-    // Set direction of GPIO pins (1 is input to UBX, 0 is output)
+    _set_gpio_field(RX_EN, 0);
+    _flush_gpio();
 
     // Configure ATR
     _iface->set_atr_reg(
         dboard_iface::UNIT_RX, gpio_atr::ATR_REG_IDLE, _rx_gpio.atr_idle);
     _iface->set_atr_reg(
-        dboard_iface::UNIT_RX, gpio_atr::ATR_REG_TX_ONLY, _rx_gpio.atr_tx);
-    _iface->set_atr_reg(
         dboard_iface::UNIT_RX, gpio_atr::ATR_REG_RX_ONLY, _rx_gpio.atr_rx);
-    _iface->set_atr_reg(dboard_iface::UNIT_RX,
-        gpio_atr::ATR_REG_FULL_DUPLEX,
-        _rx_gpio.atr_full_duplex);
 
     // Engage ATR control (1 is ATR control, 0 is manual control)
     _iface->set_pin_ctrl(dboard_iface::UNIT_RX, _rx_gpio.atr_mask);
@@ -160,6 +157,11 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
         get_rx_subtree()->create<bool>("enabled").set(true);
 
         get_rx_subtree()->create<bool>("use_lo_offset").set(false);
+
+        get_rx_subtree()
+            ->create<sensor_value_t>("sensors/lo_locked")
+            .set_publisher(std::bind(&db_kintex7sdr_rx::_get_locked, this, "RXLO"));
+
         get_rx_subtree()->create<double>("bandwidth/value").set(KINTEX7SDR_RX_BW_RANGE.start());
         get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
     }
@@ -179,6 +181,10 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
     //_iface->set_clock_enabled(dboard_iface::UNIT_TX, true);
 
+
+    _get_locked("RXLO");
+
+    ////INIT RXLO
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x02 << 1) << 8) | 0x01, 16);
 
     // bring CPLD out of reset
@@ -227,16 +233,28 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x08 << 1) << 8) | 0x3d, 16);
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x09 << 1) << 8) | 0x70, 16);
     _spi_xfer_to(SPI_DEST_LTC6948, ((0x0a << 1) << 8) | 0xa3, 16);
-}
+
+    _get_locked("RXLO");
+
+	UHD_LOG_WARNING(
+			"KINTEX7SDR_RX", "I'm running");
+};
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
 {
-    UHD_SAFE_CALL(
-        // Возвращаем линии в безопасное состояние
-        _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
-        _set_gpio_field(GPIO_CPLD_RST_N, 0);
-        _flush_gpio();
-    )
+	UHD_SAFE_CALL(
+			// Engage ATR control (1 is ATR control, 0 is manual control)
+			_iface->set_pin_ctrl(dboard_iface::UNIT_RX, uint32_t(0));
+
+	// Возвращаем линии в безопасное состояние
+	_set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
+	_set_gpio_field(GPIO_CPLD_RST_N, 0);
+	_set_gpio_field(RX_EN, 0);
+	_flush_gpio();
+
+	UHD_LOG_WARNING(
+			"KINTEX7SDR_RX", "I'm toast i'm done");
+	)
 }
 
 // ============================================================================
@@ -309,7 +327,7 @@ uint32_t db_kintex7sdr_rx::_get_gpio_field(gpio_field_id id)
 void db_kintex7sdr_rx::_flush_gpio()
 {
     if (_rx_gpio.dirty) {
-        _iface->set_gpio_out(uhd::usrp::dboard_iface::UNIT_RX, _rx_gpio.value, _rx_gpio.mask);
+        _iface->set_gpio_out(dboard_iface::UNIT_RX, _rx_gpio.value, _rx_gpio.mask);
         _rx_gpio.dirty = false;
         _rx_gpio.mask  = 0;
     }
@@ -335,7 +353,7 @@ uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nb
         _spi_dest_valid = true;
     }
 
-    return _iface->read_write_spi(uhd::usrp::dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
+    return _iface->read_write_spi(dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
 }
 
 
@@ -467,6 +485,21 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
 
     _rx_freq = (k_ref_hz * n_div) / r_div_u8;
     return _rx_freq;
+}
+
+/***********************************************************************
+ * Board Control Handling
+ **********************************************************************/
+sensor_value_t db_kintex7sdr_rx::_get_locked([[maybe_unused]] const std::string& pll_name = "RXLO")
+{
+	std::lock_guard<std::mutex> lock(_spi_mutex);
+
+	_rxlo_locked = (_get_gpio_field(RX_LO_LOCKED) != 0);
+
+	UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+	    std::string("LO lock status: [") + (_rxlo_locked ? "LOCKED" : "----") + "]");
+
+	return sensor_value_t("RXLO", _rxlo_locked, "locked", "unlocked");
 }
 
 double db_kintex7sdr_rx::set_rx_gain(double gain)

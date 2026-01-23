@@ -89,7 +89,7 @@ private:
     uint32_t _get_gpio_field(gpio_field_id id);
     void _flush_gpio();
 
-    // --- SPI helpers (по образцу: route+spi под ОДНИМ mutex) ---
+    sensor_value_t _get_locked(const std::string& pll_name);
 
 private:
     uhd::usrp::dboard_iface::sptr _iface;
@@ -114,6 +114,8 @@ private:
 
     const double _PFD_freq = 50e6;
     const double _REF_freq = ( _PFD_freq * 2.0 );
+
+    bool _rxlo_locked = false;
 };
 
 }}}} // namespace uhd::usrp::dboard::db_kintex7sdr

@@ -50,6 +50,13 @@ enum spi_dest_t {
     {30.0, 0b11, 0x50},
 }};*/
 
+// ВАЖНО: unit/offset/mask должны соответствовать твоим FPGA constraints.
+// Здесь минимально: 3 бита SPI_ADDR и CPLD_RST_N.
+const gpio_field_info_t fields[] = {
+    {GPIO_SPI_ADDR,   uhd::usrp::dboard_iface::UNIT_RX, 0, 0x7u << 0, 3, true},
+    {GPIO_CPLD_RST_N, uhd::usrp::dboard_iface::UNIT_RX, 3, 0x1u << 3, 1, true},
+};
+
 // ============================================================================
 // db_kintex7sdr_rx
 // ============================================================================
@@ -218,13 +225,6 @@ db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
 
 void db_kintex7sdr_rx::_init_gpio_map()
 {
-    // ВАЖНО: unit/offset/mask должны соответствовать твоим FPGA constraints.
-    // Здесь минимально: 3 бита SPI_ADDR и CPLD_RST_N.
-    const gpio_field_info fields[] = {
-        {GPIO_SPI_ADDR,   uhd::usrp::dboard_iface::UNIT_RX, 0, 0x7u << 0, 3, true},
-        {GPIO_CPLD_RST_N, uhd::usrp::dboard_iface::UNIT_RX, 3, 0x1u << 3, 1, true},
-    };
-
     for (const auto& f : fields) {
         _gpio_map[f.id] = f;
         if (f.fpga_drives) {

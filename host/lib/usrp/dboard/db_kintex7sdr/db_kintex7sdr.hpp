@@ -42,20 +42,25 @@ public:
 */
 
 private:
-    // GPIO fields (минимум нужного сейчас)
     enum gpio_field_id : uint8_t {
         GPIO_SPI_ADDR   = 0,
         GPIO_CPLD_RST_N = 1,
+		RX_LO_LOCKED	= 2
         // при необходимости добавишь тут LOCKED/EN/etc
     };
 
-    struct gpio_field_info {
-        gpio_field_id id;
-        uhd::usrp::dboard_iface::unit_t unit;
-        uint32_t offset;
-        uint32_t mask;
-        uint8_t  width;
-        bool     fpga_drives; // true => FPGA drives pin ("INPUT" со стороны платы)
+    struct gpio_field_info_t {
+    	gpio_field_id id;
+    	uhd::usrp::dboard_iface::unit_t unit;
+    	uint32_t offset;
+    	uint32_t mask;
+    	uint8_t  width;
+    	enum { OUTPUT, INPUT } direction;
+    	bool is_atr_controlled;
+    	uint32_t atr_idle;
+    	uint32_t atr_tx;
+    	uint32_t atr_rx;
+    	uint32_t atr_full_duplex;
     };
 
     struct gpio_reg_cache {

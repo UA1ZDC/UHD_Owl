@@ -41,12 +41,12 @@ public:
     };
 */
 
-private:
     enum gpio_field_id : uint8_t {
         GPIO_SPI_ADDR   = 0,
         GPIO_CPLD_RST_N = 1,
-		RX_LO_LOCKED	= 2
-        // при необходимости добавишь тут LOCKED/EN/etc
+		RX_LO_LOCKED	= 2,
+		RX_EN			= 3,
+		TPS_EN			= 4
     };
 
     struct gpio_field_info_t {
@@ -55,7 +55,7 @@ private:
     	uint32_t offset;
     	uint32_t mask;
     	uint8_t  width;
-    	enum { OUTPUT, INPUT } direction;
+    	enum { fpga_OUTPUT, fpga_INPUT } direction;
     	bool is_atr_controlled;
     	uint32_t atr_idle;
     	uint32_t atr_tx;
@@ -63,11 +63,19 @@ private:
     	uint32_t atr_full_duplex;
     };
 
+private:
+    static const std::array<gpio_field_info_t, 5> gpio_field_info;
+
     struct gpio_reg_cache {
         bool dirty;
         uint32_t value;
         uint32_t mask;
         uint32_t ddr;
+        uint32_t atr_mask;
+        uint32_t atr_idle;
+        uint32_t atr_tx;
+        uint32_t atr_rx;
+        uint32_t atr_full_duplex;
     };
 
     struct cpld_cache_entry {
@@ -90,8 +98,8 @@ private:
     std::mutex _spi_mutex;
     std::mutex _cpld_mutex;
 
-    std::map<gpio_field_id, gpio_field_info> _gpio_map;
-    gpio_reg_cache _rx_gpio;
+    std::map<gpio_field_id, gpio_field_info_t> _gpio_map;
+    gpio_reg_cache _rx_gpio = {false, 0, 0, 0, 0, 0, 0, 0, 0};
     std::map<uint8_t, cpld_cache_entry> _cpld_cache;
 
     // кэш текущего SPI destination (чтобы не дёргать GPIO каждый раз)

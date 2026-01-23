@@ -50,12 +50,15 @@ enum spi_dest_t {
     {30.0, 0b11, 0x50},
 }};*/
 
-// ВАЖНО: unit/offset/mask должны соответствовать твоим FPGA constraints.
-// Здесь минимально: 3 бита SPI_ADDR и CPLD_RST_N.
-const gpio_field_info_t fields[] = {
-    {GPIO_SPI_ADDR,   uhd::usrp::dboard_iface::UNIT_RX, 0, 0x7u << 0, 3, true},
-    {GPIO_CPLD_RST_N, uhd::usrp::dboard_iface::UNIT_RX, 3, 0x1u << 3, 1, true},
-};
+const std::array<db_kintex7sdr_rx::gpio_field_info_t, 5>
+db_kintex7sdr_rx::gpio_field_info = {{
+	//Field         										Unit			Offset	Mask	Width   					Direction						ATR    IDLE,TX,RX,FDX
+	{db_kintex7sdr_rx::GPIO_SPI_ADDR,		uhd::usrp::dboard_iface::UNIT_RX,	0,	0x7u << 0,	3,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	false,	0,	0,	0,	0	},
+    {db_kintex7sdr_rx::GPIO_CPLD_RST_N,		uhd::usrp::dboard_iface::UNIT_RX,	3,	0x1u << 3,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	false,	0,	0,	0,	0	},
+	{db_kintex7sdr_rx::RX_LO_LOCKED,		uhd::usrp::dboard_iface::UNIT_RX,	4,	0x1u << 4,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_INPUT,	false,	0,	0,	0,	0	},
+	{db_kintex7sdr_rx::RX_EN,				uhd::usrp::dboard_iface::UNIT_RX,	5,	0x1u << 5,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	true,	1,	0,	1,	0	},
+	{db_kintex7sdr_rx::TPS_EN,				uhd::usrp::dboard_iface::UNIT_RX,	6,	0x1u << 6,	1,	db_kintex7sdr_rx::gpio_field_info_t::fpga_OUTPUT,	false,	0,	0,	0,	0	}
+}};
 
 // ============================================================================
 // db_kintex7sdr_rx
@@ -65,7 +68,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     : uhd::usrp::rx_dboard_base(args)
     , _iface(get_iface())
     , _spi_cfg(uhd::spi_config_t::EDGE_RISE)
-    , _rx_gpio{false, 0, 0, 0}
+    , _rx_gpio{false, 0, 0, 0, 0, 0, 0, 0, 0}
     , _rx_freq(0.0)
     , _rx_gain(0.0)
 {
@@ -79,6 +82,23 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(uhd::usrp::dboard_base::ctor_args_t args)
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
     _set_gpio_field(GPIO_CPLD_RST_N, 0);
     _flush_gpio();
+
+
+    // Set direction of GPIO pins (1 is input to UBX, 0 is output)
+
+    // Configure ATR
+    _iface->set_atr_reg(
+        dboard_iface::UNIT_RX, gpio_atr::ATR_REG_IDLE, _rx_gpio.atr_idle);
+    _iface->set_atr_reg(
+        dboard_iface::UNIT_RX, gpio_atr::ATR_REG_TX_ONLY, _rx_gpio.atr_tx);
+    _iface->set_atr_reg(
+        dboard_iface::UNIT_RX, gpio_atr::ATR_REG_RX_ONLY, _rx_gpio.atr_rx);
+    _iface->set_atr_reg(dboard_iface::UNIT_RX,
+        gpio_atr::ATR_REG_FULL_DUPLEX,
+        _rx_gpio.atr_full_duplex);
+
+    // Engage ATR control (1 is ATR control, 0 is manual control)
+    _iface->set_pin_ctrl(dboard_iface::UNIT_RX, _rx_gpio.atr_mask);
 
     // bring CPLD out of reset
     std::this_thread::sleep_for(
@@ -225,10 +245,17 @@ db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
 
 void db_kintex7sdr_rx::_init_gpio_map()
 {
-    for (const auto& f : fields) {
-        _gpio_map[f.id] = f;
-        if (f.fpga_drives) {
-            _rx_gpio.ddr |= f.mask;
+    for (const auto& info : gpio_field_info) {
+        _gpio_map[info.id] = info;
+        if (info.direction == gpio_field_info_t::fpga_OUTPUT) {
+            _rx_gpio.ddr |= info.mask;
+        }
+        if (info.is_atr_controlled) {
+            _rx_gpio.atr_mask |= info.mask;
+            _rx_gpio.atr_idle |= (info.atr_idle << info.offset) & info.mask;
+            _rx_gpio.atr_tx |= (info.atr_tx << info.offset) & info.mask;
+            _rx_gpio.atr_rx |= (info.atr_rx << info.offset) & info.mask;
+            _rx_gpio.atr_full_duplex |= (info.atr_full_duplex << info.offset) & info.mask;
         }
     }
 }
@@ -271,7 +298,7 @@ uint32_t db_kintex7sdr_rx::_get_gpio_field(gpio_field_id id)
     // Если FPGA drives (т.е. мы сами выставляем) — читаем из кеша.
     // Важно: если позже включишь ATR, то кеш может не отражать реальное состояние
     // во время TX/RX переключений, тогда лучше читать read_gpio().
-    if (f.fpga_drives) {
+    if (f.direction == gpio_field_info_t::fpga_OUTPUT) {
         return (_rx_gpio.value & f.mask) >> f.offset;
     }
 

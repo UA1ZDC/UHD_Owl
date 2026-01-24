@@ -552,9 +552,12 @@ void db_kintex7sdr_rx::_ltc6948_apply_pll_config(const ltc6948_pll_config& cfg)
 
     const uint32_t num = std::min<uint32_t>(cfg.num, ltc6948::NUM_MAX);
 
-    // REG3: preserve base bits, but ensure fractional mode (INTN=0) and desired dither setting.
+    const bool is_integer = (num == 0);
+    const auto mode = is_integer ? ltc6948::mode_t::integer : ltc6948::mode_t::fractional;
+
+    // REG3: set mode (integer if NUM==0, else fractional). Keep dither OFF until LOCK.
     uint8_t reg3 = _ltc6948_regs[ltc6948::REG3];
-    reg3 = ltc6948::pack_reg3(reg3, ltc6948::mode_t::fractional,  ltc6948::dither_t::off);
+    reg3 = ltc6948::pack_reg3(reg3, mode, ltc6948::dither_t::off);
 
     // REG6/7: RD + ND
     const uint8_t reg6 = ltc6948::pack_reg6(cfg.rd, cfg.nd);
@@ -592,9 +595,10 @@ void db_kintex7sdr_rx::_ltc6948_apply_pll_config(const ltc6948_pll_config& cfg)
     _rxlo_locked = locked;
 
     // enable dither after lock
+    const auto dither_after_lock = is_integer ? ltc6948::dither_t::off : k_ltc6948_dither;
     uint8_t reg3_on = ltc6948::pack_reg3(_ltc6948_regs[ltc6948::REG3],
-    		ltc6948::mode_t::fractional,
-			k_ltc6948_dither);
+		mode,
+		dither_after_lock);
     _ltc6948_write_reg(ltc6948::REG3, reg3_on);
 
     // REG4: enable CPLE only after LOCK; otherwise force it off

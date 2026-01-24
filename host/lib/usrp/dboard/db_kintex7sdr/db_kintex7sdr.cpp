@@ -120,7 +120,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
     _spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_wr(ltc5594::REG_BCTL,
-        uint8_t(ltc5594::bctl::BIT_EAMP | ltc5594::bctl::BIT_EDEM | ltc5594::bctl::BIT_EDC)), 16);
+        uint8_t(ltc5594::bctl::BIT_EAMP | ltc5594::bctl::BIT_EDEM | ltc5594::bctl::BIT_EDC) | ltc5594::bctl::BIT_EADJ), 16);
 
     rx = static_cast<uint16_t>(_spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_rd(ltc5594::REG_BCTL), 16));
     oss.str("");
@@ -128,16 +128,12 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
         << std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
-    _ltc6948_init();
-
     // UHD props
     using namespace std::placeholders;
     get_rx_subtree()->create<std::string>("name").set("DB_KINTEX7SDR RX");
 
-    get_rx_subtree()->create<double>("freq/value")
-        .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_frequency, this, _1))
-        .set(KINTEX7SDR_RX_FREQ_RANGE.start());
-    get_rx_subtree()->create<uhd::meta_range_t>("freq/range").set(KINTEX7SDR_RX_FREQ_RANGE);
+    get_rx_subtree()->create<double>("bandwidth/value").set(KINTEX7SDR_RX_BW_RANGE.start());
+    get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
 
     get_rx_subtree()->create<double>("gains/PGA0/value")
         .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_gain, this, _1))
@@ -151,24 +147,30 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     get_rx_subtree()->create<bool>("enabled").set(true);
     get_rx_subtree()->create<bool>("use_lo_offset").set(false);
 
-    get_rx_subtree()->create<sensor_value_t>("sensors/lo_locked")
-        .set_publisher(std::bind(&db_kintex7sdr_rx::_get_locked, this, "RXLO"));
-
-    get_rx_subtree()->create<double>("bandwidth/value").set(KINTEX7SDR_RX_BW_RANGE.start());
-    get_rx_subtree()->create<uhd::meta_range_t>("bandwidth/range").set(KINTEX7SDR_RX_BW_RANGE);
-
     try {
         _iface->set_clock_rate(dboard_iface::UNIT_RX, _REF_freq);
     } catch (const uhd::not_implemented_error&) {
         UHD_LOG_WARNING("KINTEX7SDR_RX", "Unable to set dboard clock rate - phase will vary");
     }
 
+    _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
+
+    get_rx_subtree()->create<sensor_value_t>("sensors/lo_locked")
+        .set_publisher(std::bind(&db_kintex7sdr_rx::_get_locked, this, "RXLO"));
+
     const double clock_rate = _iface->get_clock_rate(dboard_iface::UNIT_RX);
     oss.str("");
     oss << "UNIT_RX REF clock frequency: " << std::fixed << std::setprecision(1) << double(clock_rate / fMHz) << "MHz";
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
-    _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
+    _ltc6948_init();
+
+    get_rx_subtree()->create<uhd::meta_range_t>("freq/range").set(KINTEX7SDR_RX_FREQ_RANGE);
+
+    get_rx_subtree()->create<double>("freq/value")
+        .set_coercer(std::bind(&db_kintex7sdr_rx::set_rx_frequency, this, _1))
+        .set(800e6);
+
     _get_locked("RXLO");
 
     UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm running");
@@ -434,7 +436,7 @@ void db_kintex7sdr_rx::_ltc6948_apply_pll_config(const ltc6948_pll_config& cfg)
 
     // REG3: preserve base bits, but ensure fractional mode (INTN=0) and desired dither setting.
     uint8_t reg3 = _ltc6948_regs[ltc6948::REG3];
-    reg3 = ltc6948::pack_reg3(reg3, ltc6948::mode_t::fractional, k_ltc6948_dither);
+    reg3 = ltc6948::pack_reg3(reg3, ltc6948::mode_t::fractional,  ltc6948::dither_t::off);
 
     // REG6/7: RD + ND
     const uint8_t reg6 = ltc6948::pack_reg6(cfg.rd, cfg.nd);
@@ -471,6 +473,12 @@ void db_kintex7sdr_rx::_ltc6948_apply_pll_config(const ltc6948_pll_config& cfg)
     }
     _rxlo_locked = locked;
 
+    // enable dither after lock
+    uint8_t reg3_on = ltc6948::pack_reg3(_ltc6948_regs[ltc6948::REG3],
+    		ltc6948::mode_t::fractional,
+			k_ltc6948_dither);
+    _ltc6948_write_reg(ltc6948::REG3, reg3_on);
+
     // REG4: enable CPLE only after LOCK; otherwise force it off
     const bool cple_en = locked;
     const uint8_t reg4 = ltc6948::reg4_set_cple(_ltc6948_regs[ltc6948::REG4], cple_en);
@@ -483,7 +491,7 @@ void db_kintex7sdr_rx::_ltc6948_apply_pll_config(const ltc6948_pll_config& cfg)
                 % unsigned(st0) % ltc6948::status_to_string(st0)).str());
     }
 
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+/*    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
         (boost::format("LTC6948 set: req=%.3f MHz act=%.3f MHz (err=%.3f kHz), RD=%u ND=%u NUM=%u OD=%u, REGB(BST=%u FILT=%u RFO=%u)")
             % ((cfg.actual_freq_hz - cfg.error_hz) / fMHz)
             % (cfg.actual_freq_hz / fMHz)
@@ -494,7 +502,7 @@ void db_kintex7sdr_rx::_ltc6948_apply_pll_config(const ltc6948_pll_config& cfg)
             % unsigned(cfg.od)
             % unsigned(ltc6948::get_bst(regb))
             % unsigned(ltc6948::filt_bits(ltc6948::get_filt(regb)))
-            % unsigned(ltc6948::rfo_bits(ltc6948::get_rfo(regb)))).str());
+            % unsigned(ltc6948::rfo_bits(ltc6948::get_rfo(regb)))).str());*/
 }
 
 // ============================================================================

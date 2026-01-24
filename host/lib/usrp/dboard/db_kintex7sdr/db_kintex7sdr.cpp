@@ -5,11 +5,15 @@
 
 #include <uhd/types/sensors.hpp>
 
+#include <boost/format.hpp>
+
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -127,6 +131,8 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
 
+    _ltc6948_init();
+
     //Регистрируем UHD properties
     {
         using namespace std::placeholders;
@@ -181,58 +187,6 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     _iface->set_clock_enabled(dboard_iface::UNIT_RX, true);
     //_iface->set_clock_enabled(dboard_iface::UNIT_TX, true);
 
-
-    _get_locked("RXLO");
-
-    ////INIT RXLO
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x02 << 1) << 8) | 0x01, 16);
-
-    // bring CPLD out of reset
-    std::this_thread::sleep_for(
-        std::chrono::milliseconds(5));
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x02 << 1) << 8) | 0x00, 16);
-
-    rx = _spi_xfer_to(SPI_DEST_LTC6948, (((0x02 << 1) | 0x01 ) << 8), 16);
-
-    oss.str("");
-    oss << "LTC6948 REG 02h = 0x" << std::hex << std::uppercase
-    		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x01 << 1) << 8) | (1 << 2), 16); //STATUS = LOCK
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x03 << 1) << 8) | 0x3f, 16);
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0d << 1) << 8) | 0xc0, 16);
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x04 << 1) << 8) | 0x46, 16);
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x06 << 1) << 8) | 0x10, 16);
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x07 << 1) << 8) | 0x36, 16);
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x08 << 1) << 8) | 0x00, 16);
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x09 << 1) << 8) | 0x00, 16);
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0a << 1) << 8) | 0x01, 16);
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0b << 1) << 8) | 0x9E, 16);
-
-
-
-    rx = _spi_xfer_to(SPI_DEST_LTC6948, (((0x02 << 1) | 0x01 ) << 8), 16);
-
-    oss.str("");
-    oss << "LTC6948 REG 0dh = 0x" << std::hex << std::uppercase
-    		<< std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x03 << 1) << 8) | 0x3e, 16); //(INTN=0; было 0x3F в integer)
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x06 << 1) << 8) | 0x10, 16);
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x07 << 1) << 8) | 0x33, 16);
-
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x08 << 1) << 8) | 0x3d, 16);
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x09 << 1) << 8) | 0x70, 16);
-    _spi_xfer_to(SPI_DEST_LTC6948, ((0x0a << 1) << 8) | 0xa3, 16);
 
     _get_locked("RXLO");
 
@@ -407,83 +361,249 @@ void db_kintex7sdr_rx::_cpld_update_bits(uint8_t reg7, uint32_t mask, uint32_t v
     _cpld_wr(reg7, next);
 }*/
 
-/*void db_kintex7sdr_rx::_program_ltc6948_integer_n(uint16_t n_div, uint8_t r_div)
+namespace {
+constexpr std::array<double, 4> LTC6948_VCO_MIN_HZ = {2240e6, 3080e6, 3840e6, 4200e6};
+constexpr std::array<double, 4> LTC6948_VCO_MAX_HZ = {3740e6, 4910e6, 5790e6, 6390e6};
+constexpr uint8_t LTC6948_PART_MIN = 1;
+constexpr uint8_t LTC6948_PART_MAX = 4;
+constexpr uint8_t LTC6948_PART_MASK = 0x0Fu;
+constexpr uint8_t LTC6948_OD_MASK = ltc6948::REGB_OD_MASK;
+constexpr uint8_t LTC6948_CP_LINEAR_MASK = static_cast<uint8_t>(
+    ltc6948::REGD_CPCHI | ltc6948::REGD_CPCLO | ltc6948::REGD_CPMID | ltc6948::REGD_CPRST
+    | ltc6948::REGD_CPUP | ltc6948::REGD_CPDN);
+} // namespace
+
+uint8_t db_kintex7sdr_rx::_ltc6948_read_reg(uint8_t addr)
 {
-    constexpr uint16_t k_nd_min = 32;
-    constexpr uint16_t k_nd_max = 1023;
-    constexpr uint8_t k_rd_min = 1;
-    constexpr uint8_t k_rd_max = 31;
+    const auto rx = static_cast<uint16_t>(
+        _spi_xfer_to(SPI_DEST_LTC6948, ltc6948::make_word_rd(addr), 16));
+    return ltc6948::rx_data_byte(rx);
+}
 
-    if (n_div < k_nd_min) {
-        n_div = k_nd_min;
-    } else if (n_div > k_nd_max) {
-        n_div = k_nd_max;
+void db_kintex7sdr_rx::_ltc6948_write_reg(uint8_t addr, uint8_t value, bool force)
+{
+    if (addr >= ltc6948::NUM_REGS) {
+        return;
     }
 
-    if (r_div < k_rd_min) {
-        r_div = k_rd_min;
-    } else if (r_div > k_rd_max) {
-        r_div = k_rd_max;
+    if (!force && _ltc6948_initialized && _ltc6948_regs[addr] == value) {
+        return;
     }
 
-    uint8_t reg3 = ltc6948::REG3_DEFAULT;
-    reg3 |= ltc6948::REG3_INTN;
-    reg3 &= static_cast<uint8_t>(~ltc6948::REG3_DITHEN);
+    _spi_xfer_to(SPI_DEST_LTC6948, ltc6948::make_word_wr(addr, value), 16);
+    _ltc6948_regs[addr] = value;
+}
 
-    const uint8_t reg6 = static_cast<uint8_t>(((r_div << ltc6948::REG6_RD_SHIFT)
-        & ltc6948::REG6_RD_MASK)
-        | ((n_div >> 8) & ltc6948::REG6_ND_MSB_MASK));
-    const uint8_t reg7 = static_cast<uint8_t>(n_div & 0xFFu);
+void db_kintex7sdr_rx::_ltc6948_update_bits(uint8_t addr, uint8_t mask, uint8_t value)
+{
+    if (addr >= ltc6948::NUM_REGS) {
+        return;
+    }
 
-    _ltc6948_xfer16(ltc6948::make_word_wr(ltc6948::REG3, reg3));
-    _ltc6948_xfer16(ltc6948::make_word_wr(ltc6948::REG6, reg6));
-    _ltc6948_xfer16(ltc6948::make_word_wr(ltc6948::REG7, reg7));
-}*/
+    const uint8_t base = _ltc6948_initialized ? _ltc6948_regs[addr]
+                                               : ltc6948::DEFAULT_REGS[addr];
+    const uint8_t next = static_cast<uint8_t>((base & ~mask) | (value & mask));
+    _ltc6948_write_reg(addr, next);
+}
+
+uint8_t db_kintex7sdr_rx::_ltc6948_read_part_code()
+{
+    const uint8_t reg_e = _ltc6948_read_reg(ltc6948::REGE);
+    const uint8_t part_code = reg_e & LTC6948_PART_MASK;
+    _ltc6948_part_code = part_code;
+
+    if (part_code >= LTC6948_PART_MIN && part_code <= LTC6948_PART_MAX) {
+        const std::size_t idx = part_code - 1;
+        _ltc6948_vco_min_hz = LTC6948_VCO_MIN_HZ[idx];
+        _ltc6948_vco_max_hz = LTC6948_VCO_MAX_HZ[idx];
+    } else {
+        _ltc6948_vco_min_hz = LTC6948_VCO_MIN_HZ.front();
+        _ltc6948_vco_max_hz = LTC6948_VCO_MAX_HZ.back();
+    }
+
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+        (boost::format("LTC6948 part code: 0x%1$X, VCO range: %2$.0f..%3$.0f MHz")
+            % unsigned(part_code)
+            % (_ltc6948_vco_min_hz / fMHz)
+            % (_ltc6948_vco_max_hz / fMHz))
+            .str());
+
+    return part_code;
+}
+
+void db_kintex7sdr_rx::_ltc6948_init()
+{
+    if (_ltc6948_initialized) {
+        return;
+    }
+
+    _ltc6948_regs = ltc6948::DEFAULT_REGS;
+
+    // Board-specific defaults:
+    //  * unmute output but keep mute-during-calibration enabled
+    //  * keep BD default, use LDOV=2 (как было 0x46)
+    //  * enable CP clamps, clear CP tristate
+    _ltc6948_regs[ltc6948::REG2] = static_cast<uint8_t>(
+        (_ltc6948_regs[ltc6948::REG2]
+            & static_cast<uint8_t>(~(ltc6948::REG2_PDALL | ltc6948::REG2_PDPLL
+                | ltc6948::REG2_PDVCO | ltc6948::REG2_PDOUT | ltc6948::REG2_PDFN
+                | ltc6948::REG2_OMUTE | ltc6948::REG2_POR)))
+        | ltc6948::REG2_MTCAL);
+
+    _ltc6948_regs[ltc6948::REG4] = static_cast<uint8_t>(
+        (_ltc6948_regs[ltc6948::REG4] & static_cast<uint8_t>(~ltc6948::REG4_LDOV_MASK)) | 0x02u);
+    _ltc6948_regs[ltc6948::REG4] = static_cast<uint8_t>(_ltc6948_regs[ltc6948::REG4]
+        & static_cast<uint8_t>(~ltc6948::REG4_CPLE));
+
+    _ltc6948_regs[ltc6948::REGD] = static_cast<uint8_t>(ltc6948::REGD_CPCHI | ltc6948::REGD_CPCLO);
+
+    // Program non-frequency-dependent registers first (avoid extra autocal runs).
+    for (const uint8_t addr : {ltc6948::REG1, ltc6948::REG2, ltc6948::REG3, ltc6948::REG4,
+             ltc6948::REG5, ltc6948::REGB, ltc6948::REGC, ltc6948::REGD}) {
+        _ltc6948_write_reg(addr, _ltc6948_regs[addr], true);
+    }
+
+    _ltc6948_read_part_code();
+    _ltc6948_initialized = true;
+}
+
+bool db_kintex7sdr_rx::_ltc6948_resolve_pll(double target_freq, ltc6948_pll_config& cfg)
+{
+    _ltc6948_init();
+
+    if (_ltc6948_part_code == 0) {
+        _ltc6948_read_part_code();
+    }
+
+    const double min_freq = _ltc6948_vco_min_hz / ltc6948::OD_MAX;
+    const double max_freq = _ltc6948_vco_max_hz / ltc6948::OD_MIN;
+    double target = target_freq;
+    if (target < min_freq) {
+        target = min_freq;
+    } else if (target > max_freq) {
+        target = max_freq;
+    }
+    if (target != target_freq) {
+        UHD_LOG_WARNING("DB_KINTEX7SDR_RX",
+            (boost::format("Requested %.3f MHz clipped to %.3f MHz by VCO range")
+                % (target_freq / fMHz)
+                % (target / fMHz))
+                .str());
+    }
+
+    constexpr double k_modulus = static_cast<double>(ltc6948::MODULUS);
+    double best_error = std::numeric_limits<double>::infinity();
+    bool found = false;
+
+    for (uint8_t od = ltc6948::OD_MIN; od <= ltc6948::OD_MAX; od++) {
+        const double fvco_target = target * od;
+        if (fvco_target < _ltc6948_vco_min_hz || fvco_target > _ltc6948_vco_max_hz) {
+            continue;
+        }
+
+        for (uint8_t rd = ltc6948::RD_MIN; rd <= ltc6948::RD_MAX; rd++) {
+            const double fpfd = _REF_freq / rd;
+            const double ratio = fvco_target / fpfd;
+            auto nd = static_cast<uint16_t>(std::floor(ratio));
+            if (nd < ltc6948::ND_MIN || nd > ltc6948::ND_MAX) {
+                continue;
+            }
+
+            double frac = ratio - nd;
+            uint32_t num = static_cast<uint32_t>(std::llround(frac * k_modulus));
+            if (num >= ltc6948::MODULUS) {
+                num = 0;
+                nd = static_cast<uint16_t>(nd + 1);
+            }
+            if (nd < ltc6948::ND_MIN || nd > ltc6948::ND_MAX) {
+                continue;
+            }
+
+            frac = static_cast<double>(num) / k_modulus;
+            const double fvco_actual = fpfd * (static_cast<double>(nd) + frac);
+            const double actual = fvco_actual / od;
+            const double error = std::abs(actual - target);
+
+            if (!found || error < best_error
+                || (error == best_error && (rd < cfg.rd || (rd == cfg.rd && od < cfg.od)))) {
+                cfg = {rd, od, nd, num, fpfd, fvco_actual, actual, error};
+                best_error = error;
+                found = true;
+            }
+        }
+    }
+
+    if (!found) {
+        UHD_LOG_WARNING("DB_KINTEX7SDR_RX",
+            (boost::format("Unable to resolve LTC6948 PLL for %.3f MHz") % (target / fMHz)).str());
+    }
+
+    return found;
+}
+
+void db_kintex7sdr_rx::_ltc6948_apply_pll_config(const ltc6948_pll_config& cfg)
+{
+    _ltc6948_init();
+
+    const uint32_t num = std::min<uint32_t>(cfg.num, ltc6948::NUM_MAX);
+
+    uint8_t reg3 = static_cast<uint8_t>(_ltc6948_regs[ltc6948::REG3] & ~ltc6948::REG3_INTN);
+    if (num == 0) {
+        reg3 = static_cast<uint8_t>(reg3 | ltc6948::REG3_INTN);
+    }
+
+    const uint8_t reg6 = static_cast<uint8_t>(((cfg.rd << ltc6948::REG6_RD_SHIFT) & ltc6948::REG6_RD_MASK)
+        | ((cfg.nd >> 8) & ltc6948::REG6_ND_MSB_MASK));
+    const uint8_t reg7 = static_cast<uint8_t>(cfg.nd & 0xFFu);
+    const uint8_t reg8 = static_cast<uint8_t>((num >> 12) & ltc6948::REG8_NUM_MSB_MASK);
+    const uint8_t reg9 = static_cast<uint8_t>((num >> 4) & 0xFFu);
+    const uint8_t rega = static_cast<uint8_t>((num & 0x0Fu) << ltc6948::REGA_NUM_LSB_SHIFT);
+    const uint8_t regb = static_cast<uint8_t>((_ltc6948_regs[ltc6948::REGB] & ~LTC6948_OD_MASK)
+        | (cfg.od & LTC6948_OD_MASK));
+
+    _ltc6948_write_reg(ltc6948::REG3, reg3);
+    _ltc6948_write_reg(ltc6948::REGB, regb);
+
+    // Writing REG6..REGA triggers AUTOCAL when REG3[AUTOCAL]=1 (default).
+    _ltc6948_write_reg(ltc6948::REG6, reg6, true);
+    _ltc6948_write_reg(ltc6948::REG7, reg7, true);
+    _ltc6948_write_reg(ltc6948::REG8, reg8, true);
+    _ltc6948_write_reg(ltc6948::REG9, reg9, true);
+    _ltc6948_write_reg(ltc6948::REGA, rega, true);
+
+    // Keep CP clamps enabled and CP out of tristate.
+    _ltc6948_update_bits(ltc6948::REGD, LTC6948_CP_LINEAR_MASK,
+        static_cast<uint8_t>(ltc6948::REGD_CPCHI | ltc6948::REGD_CPCLO));
+
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+        (boost::format("LTC6948 set: f=%.3f MHz (err=%.3f Hz), RD=%u ND=%u NUM=%u OD=%u")
+            % (cfg.actual_freq_hz / fMHz)
+            % cfg.error_hz
+            % unsigned(cfg.rd)
+            % unsigned(cfg.nd)
+            % unsigned(num)
+            % unsigned(cfg.od))
+            .str());
+}
 
 // ============================================================================
-// UHD coercers (пока заглушки)
+// UHD coercers
 // ============================================================================
 
 double db_kintex7sdr_rx::set_rx_frequency(double freq)
 {
-    constexpr double k_min_freq = 300e6;
-    constexpr double k_max_freq = 2200e6;
-    constexpr double k_step_hz = 1e6;
-    const double k_ref_hz (_REF_freq);
-    constexpr double k_nd_min = 32.0;
+    constexpr double k_step_hz = 1e3;
 
-    if (freq < k_min_freq) {
-        freq = k_min_freq;
-    } else if (freq > k_max_freq) {
-        freq = k_max_freq;
-    }
-
+    freq = KINTEX7SDR_RX_FREQ_RANGE.clip(freq);
     freq = std::round(freq / k_step_hz) * k_step_hz;
 
-    double r_div = std::ceil((k_nd_min * k_ref_hz) / freq);
-    if (r_div < 1.0) {
-        r_div = 1.0;
+    ltc6948_pll_config cfg{};
+    if (!_ltc6948_resolve_pll(freq, cfg)) {
+        return _rx_freq;
     }
 
-    auto r_div_u8 = static_cast<uint8_t>(r_div);
-
-    if (r_div_u8 < 1) {
-        r_div_u8 = 1;
-    } else if (r_div_u8 > 31) {
-        r_div_u8 = 31;
-    }
-
-    auto n_div = static_cast<uint16_t>(std::round((freq * r_div_u8) / k_ref_hz));
-
-    if (n_div < 32) {
-        n_div = 32;
-    } else if (n_div > 1023) {
-        n_div = 1023;
-    }
-
-    //_program_ltc6948_integer_n(n_div, r_div_u8);
-
-    _rx_freq = (k_ref_hz * n_div) / r_div_u8;
+    _ltc6948_apply_pll_config(cfg);
+    _rx_freq = cfg.actual_freq_hz;
     return _rx_freq;
 }
 

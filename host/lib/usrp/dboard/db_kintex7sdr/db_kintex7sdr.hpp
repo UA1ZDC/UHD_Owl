@@ -14,6 +14,7 @@
 #include <uhd/utils/log.hpp>
 #include <uhd/utils/safe_call.hpp>
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <mutex>
@@ -91,6 +92,25 @@ private:
 
     sensor_value_t _get_locked(const std::string& pll_name);
 
+    struct ltc6948_pll_config {
+        uint8_t rd;
+        uint8_t od;
+        uint16_t nd;
+        uint32_t num;
+        double fpfd_hz;
+        double fvco_hz;
+        double actual_freq_hz;
+        double error_hz;
+    };
+
+    void _ltc6948_init();
+    uint8_t _ltc6948_read_reg(uint8_t addr);
+    void _ltc6948_write_reg(uint8_t addr, uint8_t value, bool force = false);
+    void _ltc6948_update_bits(uint8_t addr, uint8_t mask, uint8_t value);
+    uint8_t _ltc6948_read_part_code();
+    bool _ltc6948_resolve_pll(double target_freq, ltc6948_pll_config& cfg);
+    void _ltc6948_apply_pll_config(const ltc6948_pll_config& cfg);
+
 private:
     uhd::usrp::dboard_iface::sptr _iface;
     uhd::spi_config_t _spi_cfg;
@@ -108,6 +128,12 @@ private:
 
     // публичный для чиповых функций: lock + route + xfer
     uint32_t _spi_xfer_to(uint32_t dest3, uint32_t word, size_t nbits);
+
+    std::array<uint8_t, ltc6948::NUM_REGS> _ltc6948_regs{};
+    bool _ltc6948_initialized{false};
+    uint8_t _ltc6948_part_code{0};
+    double _ltc6948_vco_min_hz{2240e6};
+    double _ltc6948_vco_max_hz{6390e6};
 
     double _rx_freq;
     double _rx_gain;

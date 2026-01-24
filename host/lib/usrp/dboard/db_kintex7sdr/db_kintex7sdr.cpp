@@ -127,7 +127,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     get_rx_subtree()->create<std::string>("antenna/value").set(KINTEX7SDR_RX_ANTENNAS.at(0));
     get_rx_subtree()->create<std::vector<std::string>>("antenna/options").set(KINTEX7SDR_RX_ANTENNAS);
 
-    get_rx_subtree()->create<std::string>("connection").set("IQ");
+    get_rx_subtree()->create<std::string>("connection").set("QI");
     get_rx_subtree()->create<bool>("enabled").set(true);
     get_rx_subtree()->create<bool>("use_lo_offset").set(false);
 
@@ -347,12 +347,12 @@ void db_kintex7sdr_rx::_ltc5594_apply_for_lo(double lo_hz)
         _ltc5594_last_reg12 = match.reg12;
         _ltc5594_last_reg13 = match.reg13;
 
-        UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+        /*UHD_LOG_INFO("DB_KINTEX7SDR_RX",
             (boost::format("LTC5594 LO-match: f_LO=%.3f MHz, bucket=%u, REG12=0x%02X REG13=0x%02X")
                 % (lo_hz / fMHz)
                 % unsigned(match.table_index)
                 % unsigned(match.reg12)
-                % unsigned(match.reg13)).str());
+                % unsigned(match.reg13)).str());*/
     }
 
     // Apply cached per-bucket calibration values (reserved for future autocal).

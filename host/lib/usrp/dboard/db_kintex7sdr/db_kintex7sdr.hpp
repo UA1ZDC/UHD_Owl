@@ -101,6 +101,15 @@ private:
     bool _ltc6948_resolve_pll(double target_freq, double tol_hz, ltc6948_pll_config& cfg);
     void _ltc6948_apply_pll_config(const ltc6948_pll_config& cfg);
 
+    // LTC5594 (IQ demod) helpers
+    void _ltc5594_init();
+    uint8_t _ltc5594_read_reg(uint8_t addr);
+    void _ltc5594_write_reg(uint8_t addr, uint8_t value, bool force = false);
+    void _ltc5594_apply_for_lo(double lo_hz);
+
+    // Reserved for future auto-calibration (no-op for now)
+    void _ltc5594_maybe_run_autocal(double /*lo_hz*/);
+
 private:
     uhd::usrp::dboard_iface::sptr _iface;
     uhd::spi_config_t _spi_cfg;
@@ -131,6 +140,40 @@ private:
     // RXLO tuning cache (avoid unnecessary PLL reprogramming)
     ltc6948_pll_config _rxlo_last_cfg{};
     bool _rxlo_cfg_valid{false};
+
+    // LTC5594 register cache (we keep a validity bit per register because
+    // power-up defaults are not always guaranteed).
+    std::array<uint8_t, ltc5594::NUM_REGS> _ltc5594_regs{};
+    std::array<bool,    ltc5594::NUM_REGS> _ltc5594_reg_valid{};
+    bool _ltc5594_initialized{false};
+
+    // LO matching cache: we cache by “datasheet table index” (coarse bucket)
+    // to avoid redundant programming on small LO changes.
+    std::size_t _ltc5594_last_match_idx{static_cast<std::size_t>(-1)};
+    uint8_t _ltc5594_last_reg12{0};
+    uint8_t _ltc5594_last_reg13{0};
+    struct ltc5594_cal_cache_entry {
+        // Placeholders for future closed-loop calibration.
+        // We do NOT run auto-calibration yet; values are only applied if valid=true.
+        bool valid{false};
+
+        // DC offsets (REG_DCOI/REG_DCOQ)
+        uint8_t dcoi{0x80};
+        uint8_t dcoq{0x80};
+
+        // IQ gain error (GERR[5:0] in REG_GERR_IP3CC)
+        uint8_t gerr_6b{0x20};
+
+        // IQ phase adjust (PHA[8:0] across REG_PHA_8_1 + REG_PHA0_MISC[7])
+        uint16_t pha_9b{0x100};
+
+        // Reserved for future expansion (e.g. IP3 trims, amp trims, temp tags)
+        uint8_t reserved0{0};
+        uint8_t reserved1{0};
+    };
+
+    // Cache keyed by LO matching bucket (datasheet table index).
+    std::map<std::size_t, ltc5594_cal_cache_entry> _ltc5594_cal_cache;
 
     const double _PFD_freq = 50e6;
     const double _REF_freq = (_PFD_freq * 2.0);

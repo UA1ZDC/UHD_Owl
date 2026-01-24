@@ -109,24 +109,8 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     _set_gpio_field(GPIO_CPLD_RST_N, 1);
     _flush_gpio();
 
-    // LTC5594 quick init (unchanged)
-    _spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_wr(ltc5594::REG_BCTL, 0x08), 16);
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-    uint16_t rx = static_cast<uint16_t>(_spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_rd(ltc5594::REG_CHIPID), 16));
-    std::ostringstream oss;
-    oss << "LTC5594 CHIPID = 0x" << std::hex << std::uppercase
-        << std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
-
-    _spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_wr(ltc5594::REG_BCTL,
-        uint8_t(ltc5594::bctl::BIT_EAMP | ltc5594::bctl::BIT_EDEM | ltc5594::bctl::BIT_EDC) | ltc5594::bctl::BIT_EADJ), 16);
-
-    rx = static_cast<uint16_t>(_spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_rd(ltc5594::REG_BCTL), 16));
-    oss.str("");
-    oss << "LTC5594 REG_BCTL = 0x" << std::hex << std::uppercase
-        << std::setw(2) << std::setfill('0') << unsigned(ltc5594::rx_data_byte(rx));
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
+    // IQ demod bring-up (LTC5594): reset + enable blocks.
+    _ltc5594_init();
 
     // UHD props
     using namespace std::placeholders;
@@ -159,6 +143,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
         .set_publisher(std::bind(&db_kintex7sdr_rx::_get_locked, this, "RXLO"));
 
     const double clock_rate = _iface->get_clock_rate(dboard_iface::UNIT_RX);
+    std::ostringstream oss;
     oss.str("");
     oss << "UNIT_RX REF clock frequency: " << std::fixed << std::setprecision(1) << double(clock_rate / fMHz) << "MHz";
     UHD_LOG_INFO("DB_KINTEX7SDR_RX", oss.str());
@@ -273,6 +258,139 @@ uint32_t db_kintex7sdr_rx::_spi_xfer_to(uint32_t dest3, uint32_t word, size_t nb
     }
 
     return _iface->read_write_spi(dboard_iface::UNIT_RX, _spi_cfg, word, nbits);
+}
+
+// ============================================================================
+// LTC5594 low-level reg access + LO-matching “calibration” (from datasheet table)
+// ============================================================================
+
+uint8_t db_kintex7sdr_rx::_ltc5594_read_reg(uint8_t addr)
+{
+    if (addr >= ltc5594::NUM_REGS) {
+        return 0;
+    }
+    const auto rx = static_cast<uint16_t>(
+        _spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_rd(addr), 16));
+    return ltc5594::rx_data_byte(rx);
+}
+
+void db_kintex7sdr_rx::_ltc5594_write_reg(uint8_t addr, uint8_t value, bool force)
+{
+    if (addr >= ltc5594::NUM_REGS) {
+        return;
+    }
+
+    if (!force && _ltc5594_reg_valid[addr] && _ltc5594_regs[addr] == value) {
+        return;
+    }
+
+    _spi_xfer_to(SPI_DEST_LTC5594, ltc5594::make_word_wr(addr, value), 16);
+    _ltc5594_regs[addr] = value;
+    _ltc5594_reg_valid[addr] = true;
+}
+
+void db_kintex7sdr_rx::_ltc5594_init()
+{
+    if (_ltc5594_initialized) {
+        return;
+    }
+
+    _ltc5594_regs.fill(0);
+    _ltc5594_reg_valid.fill(false);
+
+    // Soft reset: set SRST briefly, then enable the required blocks.
+    _ltc5594_write_reg(ltc5594::REG_BCTL,
+        ltc5594::pack_bctl(ltc5594::bctl::ENABLE_ALL, true),
+        true /*force*/);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+    _ltc5594_write_reg(ltc5594::REG_BCTL,
+        ltc5594::pack_bctl(ltc5594::bctl::ENABLE_ALL, false),
+        true /*force*/);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+
+    const uint8_t chipid = _ltc5594_read_reg(ltc5594::REG_CHIPID);
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+        (boost::format("LTC5594 CHIPID = 0x%1$02X") % unsigned(chipid)).str());
+
+    _ltc5594_initialized = true;
+}
+
+void db_kintex7sdr_rx::_ltc5594_maybe_run_autocal(double /*lo_hz*/)
+{
+    // Placeholder: real closed-loop IQ auto-calibration will live here.
+    // Intentionally no-op for now.
+}
+
+void db_kintex7sdr_rx::_ltc5594_apply_for_lo(double lo_hz)
+{
+    if (!_ltc5594_initialized) {
+        _ltc5594_init();
+    }
+
+    const auto match = ltc5594::resolve_lo_match(lo_hz);
+    if (!match.valid) {
+        UHD_LOG_WARNING("DB_KINTEX7SDR_RX",
+            (boost::format("LTC5594: no LO-matching entry for f_LO=%.3f MHz")
+                % (lo_hz / fMHz)).str());
+        return;
+    }
+
+    const bool same_bucket = (_ltc5594_last_match_idx == match.table_index);
+    const bool same_regs   = (same_bucket && _ltc5594_last_reg12 == match.reg12 && _ltc5594_last_reg13 == match.reg13);
+
+    if (!same_regs) {
+        _ltc5594_write_reg(ltc5594::REG_LVCM_CF1, match.reg12);
+        _ltc5594_write_reg(ltc5594::REG_BAND_LF1_CF2, match.reg13);
+
+        _ltc5594_last_match_idx = match.table_index;
+        _ltc5594_last_reg12 = match.reg12;
+        _ltc5594_last_reg13 = match.reg13;
+
+        UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+            (boost::format("LTC5594 LO-match: f_LO=%.3f MHz, bucket=%u, REG12=0x%02X REG13=0x%02X")
+                % (lo_hz / fMHz)
+                % unsigned(match.table_index)
+                % unsigned(match.reg12)
+                % unsigned(match.reg13)).str());
+    }
+
+    // Apply cached per-bucket calibration values (reserved for future autocal).
+    // Right now the cache is expected to be empty (valid=false everywhere),
+    // but the wiring is in place.
+    const auto it = _ltc5594_cal_cache.find(match.table_index);
+    if (it != _ltc5594_cal_cache.end() && it->second.valid) {
+        const auto& cal = it->second;
+
+        // DC offsets
+        _ltc5594_write_reg(ltc5594::REG_DCOI, cal.dcoi);
+        _ltc5594_write_reg(ltc5594::REG_DCOQ, cal.dcoq);
+
+        // IQ gain error: preserve IP3CC[1:0] bits
+        uint8_t reg11 = 0;
+        if (_ltc5594_reg_valid[ltc5594::REG_GERR_IP3CC]) {
+            reg11 = _ltc5594_regs[ltc5594::REG_GERR_IP3CC];
+        } else {
+            reg11 = _ltc5594_read_reg(ltc5594::REG_GERR_IP3CC);
+        }
+        _ltc5594_write_reg(ltc5594::REG_GERR_IP3CC, ltc5594::pack_reg11_gerr(reg11, cal.gerr_6b));
+
+        // IQ phase: preserve amplifier settings in REG_PHA0_MISC (0x15)
+        uint8_t reg15 = 0;
+        if (_ltc5594_reg_valid[ltc5594::REG_PHA0_MISC]) {
+            reg15 = _ltc5594_regs[ltc5594::REG_PHA0_MISC];
+        } else {
+            reg15 = _ltc5594_read_reg(ltc5594::REG_PHA0_MISC);
+        }
+
+        uint8_t reg14 = 0;
+        uint8_t reg15_new = 0;
+        ltc5594::pack_pha_9b(cal.pha_9b, reg14, reg15, reg15_new);
+        _ltc5594_write_reg(ltc5594::REG_PHA_8_1, reg14);
+        _ltc5594_write_reg(ltc5594::REG_PHA0_MISC, reg15_new);
+    }
+
+    _ltc5594_maybe_run_autocal(lo_hz);
 }
 
 // ============================================================================
@@ -519,6 +637,8 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
 
     // Cache shortcut: if already within +/-0.5 MHz, don't touch PLL
     if (_rxlo_cfg_valid && std::abs(freq - _rxlo_last_cfg.actual_freq_hz) <= k_cache_tol_hz) {
+        // Still ensure the IQ demod (LTC5594) is configured for the current LO bucket.
+        _ltc5594_apply_for_lo(_rxlo_last_cfg.actual_freq_hz);
         return _rxlo_last_cfg.actual_freq_hz;
     }
 
@@ -528,6 +648,9 @@ double db_kintex7sdr_rx::set_rx_frequency(double freq)
     }
 
     _ltc6948_apply_pll_config(cfg);
+
+    // Configure LTC5594 LO matching (and apply cached per-bucket calibration if present).
+    _ltc5594_apply_for_lo(cfg.actual_freq_hz);
 
     _rx_freq = cfg.actual_freq_hz;
     _rxlo_last_cfg = cfg;

@@ -167,8 +167,8 @@ static inline uint8_t pack_bctl(uint8_t enable_mask, bool srst)
  * Single-Ended LO Matching)
  **********************************************************************/
 struct lo_match_entry_t {
-    uint32_t f_lo_min_hz;
-    uint32_t f_lo_max_hz_excl; // exclusive upper bound
+    uint64_t f_lo_min_hz;
+    uint64_t f_lo_max_hz_excl; // exclusive upper bound
     bool band;
     uint8_t cf1;
     uint8_t lf1;
@@ -203,7 +203,7 @@ static constexpr std::array<lo_match_entry_t, 16> LO_MATCH_TABLE_SINGLE_ENDED = 
 
     {2470000000u, 2980000000u,    true,   2u, 1u, 10u},
     {2980000000u, 3500000000u,    true,   1u, 0u, 19u},
-    {3500000000u, 9000000000u,    true,   0u, 0u,  0u}
+    {3500000000u, 9000000000ULL,    true,   0u, 0u,  0u}
 }};
 
 enum class lo_drive_mode_t {
@@ -220,12 +220,13 @@ struct lo_match_result_t {
 
 static inline lo_match_result_t resolve_lo_match_single_ended(double f_lo_hz)
 {
-    // Clamp to uint32 range for comparisons
-    const double f = f_lo_hz;
-    const uint32_t fhz = (f <= 0.0) ? 0u
-        : (f >= double(std::numeric_limits<uint32_t>::max())
-            ? std::numeric_limits<uint32_t>::max()
-            : uint32_t(f));
+    uint64_t fhz = 0;
+    if (f_lo_hz > 0.0) {
+        const double lim = double(std::numeric_limits<uint64_t>::max());
+        fhz = (f_lo_hz >= lim) ? std::numeric_limits<uint64_t>::max()
+                               : static_cast<uint64_t>(f_lo_hz);
+    }
+
 
     for (std::size_t i = 0; i < LO_MATCH_TABLE_SINGLE_ENDED.size(); i++) {
         const auto& e = LO_MATCH_TABLE_SINGLE_ENDED[i];

@@ -167,8 +167,8 @@ static inline uint8_t pack_bctl(uint8_t enable_mask, bool srst)
  * Single-Ended LO Matching)
  **********************************************************************/
 struct lo_match_entry_t {
-    uint32_t f_lo_min_hz;
-    uint32_t f_lo_max_hz_excl; // exclusive upper bound
+    uint64_t f_lo_min_hz;
+    uint64_t f_lo_max_hz_excl; // exclusive upper bound
     bool band;
     uint8_t cf1;
     uint8_t lf1;
@@ -215,12 +215,12 @@ struct lo_match_result_t {
 
 static inline lo_match_result_t resolve_lo_match(double f_lo_hz)
 {
-    // Clamp to uint32 range for comparisons
-    const double f = f_lo_hz;
-    const uint32_t fhz = (f <= 0.0) ? 0u
-        : (f >= double(std::numeric_limits<uint32_t>::max())
-            ? std::numeric_limits<uint32_t>::max()
-            : uint32_t(f));
+    uint64_t fhz = 0;
+    if (f_lo_hz > 0.0) {
+        const double lim = double(std::numeric_limits<uint64_t>::max());
+        fhz = (f_lo_hz >= lim) ? std::numeric_limits<uint64_t>::max()
+                               : static_cast<uint64_t>(f_lo_hz);
+    }
 
     for (std::size_t i = 0; i < LO_MATCH_TABLE.size(); i++) {
         const auto& e = LO_MATCH_TABLE[i];
@@ -233,14 +233,7 @@ static inline lo_match_result_t resolve_lo_match(double f_lo_hz)
             return r;
         }
     }
-
-    // Fallback to datasheet defaults (still return valid=true)
-    lo_match_result_t r;
-    r.valid = true;
-    r.table_index = std::numeric_limits<std::size_t>::max();
-    r.reg12 = pack_reg12(DEFAULT_LVCM, DEFAULT_CF1);
-    r.reg13 = pack_reg13(DEFAULT_BAND, DEFAULT_LF1, DEFAULT_CF2);
-    return r;
+    return lo_match_result_t{};
 }
 
 }}}}} // namespace uhd::usrp::dboard::db_kintex7sdr::ltc5594

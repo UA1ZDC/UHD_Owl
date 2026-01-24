@@ -347,12 +347,12 @@ void db_kintex7sdr_rx::_ltc5594_apply_for_lo(double lo_hz)
         _ltc5594_last_reg12 = match.reg12;
         _ltc5594_last_reg13 = match.reg13;
 
-        UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+        /*UHD_LOG_INFO("DB_KINTEX7SDR_RX",
             (boost::format("LTC5594 LO-match: f_LO=%.3f MHz, bucket=%u, REG12=0x%02X REG13=0x%02X")
                 % (lo_hz / fMHz)
                 % unsigned(match.table_index)
                 % unsigned(match.reg12)
-                % unsigned(match.reg13)).str());
+                % unsigned(match.reg13)).str());*/
     }
 
     // Apply cached per-bucket calibration values (reserved for future autocal).

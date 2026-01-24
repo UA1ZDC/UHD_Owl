@@ -167,8 +167,8 @@ static inline uint8_t pack_bctl(uint8_t enable_mask, bool srst)
  * Single-Ended LO Matching)
  **********************************************************************/
 struct lo_match_entry_t {
-    uint64_t f_lo_min_hz;
-    uint64_t f_lo_max_hz_excl; // exclusive upper bound
+    uint32_t f_lo_min_hz;
+    uint32_t f_lo_max_hz_excl; // exclusive upper bound
     bool band;
     uint8_t cf1;
     uint8_t lf1;
@@ -184,7 +184,7 @@ static constexpr uint8_t DEFAULT_CF1  = 8u;
 static constexpr uint8_t DEFAULT_LF1  = 3u;
 static constexpr uint8_t DEFAULT_CF2  = 3u;
 
-static constexpr std::array<lo_match_entry_t, 16> LO_MATCH_TABLE = {{
+static constexpr std::array<lo_match_entry_t, 16> LO_MATCH_TABLE_SINGLE_ENDED = {{
     //  f_lo_min   f_lo_max_excl  BAND  CF1 LF1 CF2
     { 300000000u,  339000000u,    false, 31u, 3u, 31u},
     { 339000000u,  398000000u,    false, 21u, 3u, 24u},
@@ -206,6 +206,11 @@ static constexpr std::array<lo_match_entry_t, 16> LO_MATCH_TABLE = {{
     {3500000000u, 9000000000u,    true,   0u, 0u,  0u}
 }};
 
+enum class lo_drive_mode_t {
+    single_ended,
+    differential
+};
+
 struct lo_match_result_t {
     bool valid{false};
     std::size_t table_index{0};
@@ -213,17 +218,17 @@ struct lo_match_result_t {
     uint8_t reg13{0};
 };
 
-static inline lo_match_result_t resolve_lo_match(double f_lo_hz)
+static inline lo_match_result_t resolve_lo_match_single_ended(double f_lo_hz)
 {
-    uint64_t fhz = 0;
-    if (f_lo_hz > 0.0) {
-        const double lim = double(std::numeric_limits<uint64_t>::max());
-        fhz = (f_lo_hz >= lim) ? std::numeric_limits<uint64_t>::max()
-                               : static_cast<uint64_t>(f_lo_hz);
-    }
+    // Clamp to uint32 range for comparisons
+    const double f = f_lo_hz;
+    const uint32_t fhz = (f <= 0.0) ? 0u
+        : (f >= double(std::numeric_limits<uint32_t>::max())
+            ? std::numeric_limits<uint32_t>::max()
+            : uint32_t(f));
 
-    for (std::size_t i = 0; i < LO_MATCH_TABLE.size(); i++) {
-        const auto& e = LO_MATCH_TABLE[i];
+    for (std::size_t i = 0; i < LO_MATCH_TABLE_SINGLE_ENDED.size(); i++) {
+        const auto& e = LO_MATCH_TABLE_SINGLE_ENDED[i];
         if (fhz >= e.f_lo_min_hz && fhz < e.f_lo_max_hz_excl) {
             lo_match_result_t r;
             r.valid = true;
@@ -235,6 +240,17 @@ static inline lo_match_result_t resolve_lo_match(double f_lo_hz)
     }
     return lo_match_result_t{};
 }
+
+static inline lo_match_result_t resolve_lo_match(double f_lo_hz, lo_drive_mode_t mode)
+{
+    // Datasheet provides explicit LO matching settings for single-ended LO drive.
+    // For differential LO drive, we currently reuse the same table as a practical
+    // starting point. If lab characterization shows different optimal settings,
+    // add a dedicated differential table and switch on "mode".
+    (void)mode;
+    return resolve_lo_match_single_ended(f_lo_hz);
+}
+
 
 }}}}} // namespace uhd::usrp::dboard::db_kintex7sdr::ltc5594
 

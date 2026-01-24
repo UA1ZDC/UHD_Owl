@@ -147,6 +147,10 @@ private:
     std::array<bool,    ltc5594::NUM_REGS> _ltc5594_reg_valid{};
     bool _ltc5594_initialized{false};
 
+// LO drive mode (single-ended vs differential)
+ltc5594::lo_drive_mode_t _ltc5594_lo_mode{ltc5594::lo_drive_mode_t::differential};
+
+
     // LO matching cache: we cache by “datasheet table index” (coarse bucket)
     // to avoid redundant programming on small LO changes.
     std::size_t _ltc5594_last_match_idx{static_cast<std::size_t>(-1)};

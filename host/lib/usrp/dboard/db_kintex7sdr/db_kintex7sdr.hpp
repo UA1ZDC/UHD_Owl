@@ -33,6 +33,7 @@ public:
     double set_rx_gain(double gain);
     void set_att2_attenuation(double attn_db);
     void set_att1_attenuation(double attn_db);
+    void set_ltc5594_amp_gain(double gain_db);
 
     enum gpio_field_id : uint8_t {
         GPIO_SPI_ADDR   = 0,
@@ -174,6 +175,10 @@ ltc5594::lo_drive_mode_t _ltc5594_lo_mode{ltc5594::lo_drive_mode_t::differential
     // ATT1 (PE43205) cache to avoid redundant writes
     uint8_t _att1_last_code{0};
     bool _att1_code_valid{false};
+
+    // LTC5594 IF amp gain cache
+    double _ltc5594_amp_gain_db{0.0};
+    bool _ltc5594_amp_gain_valid{false};
     struct ltc5594_cal_cache_entry {
         // Placeholders for future closed-loop calibration.
         // We do NOT run auto-calibration yet; values are only applied if valid=true.

@@ -169,14 +169,13 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
 
     _get_locked("RXLO");
 
-    set_att1_attenuation(3.0);
+    set_att1_attenuation(6.0);
     set_att2_attenuation(12.5);
     UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm running");
 
 
 
-    _ltc5594_write_reg(ltc5594::REG_PHA0_MISC,
-            (0x6a & (~(0x7 << 4))) | (0x7 << 4), true);
+    set_ltc5594_amp_gain(10.0);
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
@@ -760,6 +759,20 @@ double db_kintex7sdr_rx::set_rx_gain(double gain)
     gain = KINTEX7SDR_RX_GAIN_RANGE.clip(gain);
     const double target_attn = KINTEX7SDR_RX_GAIN_RANGE.stop() - gain;
 
+    // LTC5594 IF amp gain control: 20 dB -> min, 30 dB -> max, linear in-between
+    double amp_gain_db = 8.0;
+    if (gain >= 30.0) {
+        amp_gain_db = 15.0;
+    } else if (gain <= 20.0) {
+        amp_gain_db = 8.0;
+    } else {
+        amp_gain_db = 8.0 + (gain - 20.0) * (7.0 / 10.0);
+    }
+
+    if (!_ltc5594_amp_gain_valid || std::abs(amp_gain_db - _ltc5594_amp_gain_db) > 0.5) {
+        set_ltc5594_amp_gain(amp_gain_db);
+    }
+
     double current_attn = std::numeric_limits<double>::quiet_NaN();
     if (_att1_code_valid && _att2_code_valid) {
         const double att1_db = static_cast<double>(_att1_last_code) * 6.0;
@@ -857,6 +870,43 @@ void db_kintex7sdr_rx::set_att1_attenuation(double attn_db)
     _flush_gpio();
     _att1_last_code = code;
     _att1_code_valid = true;
+}
+
+void db_kintex7sdr_rx::set_ltc5594_amp_gain(double gain_db)
+{
+    // AMPG[2:0] in REG_PHA0_MISC (0x15) sets IF amp gain ~8..15 dB.
+    if (gain_db < 8.0) {
+        gain_db = 8.0;
+    } else if (gain_db > 15.0) {
+        gain_db = 15.0;
+    }
+
+    uint8_t code = static_cast<uint8_t>(std::lround(gain_db - 8.0));
+    if (code > 0x7u) {
+        code = 0x7u;
+    }
+
+    if (!_ltc5594_initialized) {
+        _ltc5594_init();
+    }
+
+    uint8_t reg15 = 0;
+    if (_ltc5594_reg_valid[ltc5594::REG_PHA0_MISC]) {
+        reg15 = _ltc5594_regs[ltc5594::REG_PHA0_MISC];
+    } else {
+        reg15 = _ltc5594_read_reg(ltc5594::REG_PHA0_MISC);
+    }
+
+    const uint8_t new_reg15 = static_cast<uint8_t>((reg15 & 0x8Fu) | ((code & 0x7u) << 4));
+    if (new_reg15 == reg15 && _ltc5594_reg_valid[ltc5594::REG_PHA0_MISC]) {
+        _ltc5594_amp_gain_db = 8.0 + static_cast<double>(code);
+        _ltc5594_amp_gain_valid = true;
+        return;
+    }
+
+    _ltc5594_write_reg(ltc5594::REG_PHA0_MISC, new_reg15);
+    _ltc5594_amp_gain_db = 8.0 + static_cast<double>(code);
+    _ltc5594_amp_gain_valid = true;
 }
 
 // Registration

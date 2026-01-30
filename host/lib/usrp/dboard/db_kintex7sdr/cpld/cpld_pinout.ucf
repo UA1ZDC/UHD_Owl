@@ -52,9 +52,9 @@ NET "MISO_LTC5594"  LOC = "B1" | PULLUP;
 ###############################################################################
 NET "ATT1_RX_C1"    LOC = "C16";
 NET "ATT1_RX_C2"    LOC = "B16";
-NET "ATT2_RX_LE"    LOC = "B14";
-NET "ATT2_SCLK_RX"  LOC = "A15";
-NET "ATT2_MOSI_RX"  LOC = "B15";
+NET "ATT2_RX_LE"    LOC = "B7";
+NET "ATT2_SCLK_RX"  LOC = "A8";
+NET "ATT2_MOSI_RX"  LOC = "B8";
 
 ###############################################################################
 # GPIO cpld_io_00..15

@@ -24,6 +24,7 @@ namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
  * Constants
  **********************************************************************/
 constexpr double fMHz = 1e6;
+constexpr auto k_att2_gpio_delay = std::chrono::microseconds(1);
 
 // Board ranges (adjust to your HW)
 static const uhd::freq_range_t KINTEX7SDR_RX_FREQ_RANGE(300e6, 2.2e9);
@@ -40,14 +41,19 @@ enum spi_dest_t {
     SPI_DEST_NONE_3B  = 0x7u
 };
 
-const std::array<db_kintex7sdr_rx::gpio_field_info_t, 5>
+const std::array<db_kintex7sdr_rx::gpio_field_info_t, 10>
 db_kintex7sdr_rx::gpio_field_info = {{
     // Field                     Unit                          Offset Mask        Width Dir                                ATR   IDLE TX RX FDX
     {GPIO_SPI_ADDR,              uhd::usrp::dboard_iface::UNIT_RX, 0,    0x7u << 0, 3,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
     {GPIO_CPLD_RST_N,            uhd::usrp::dboard_iface::UNIT_RX, 3,    0x1u << 3, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
     {RX_LO_LOCKED,               uhd::usrp::dboard_iface::UNIT_RX, 4,    0x1u << 4, 1,    gpio_field_info_t::fpga_INPUT,  false, 0,   0, 0, 0},
     {RX_EN,                      uhd::usrp::dboard_iface::UNIT_RX, 5,    0x1u << 5, 1,    gpio_field_info_t::fpga_OUTPUT, true,  0,   0, 1, 0},
-    {TPS_EN,                     uhd::usrp::dboard_iface::UNIT_RX, 6,    0x1u << 6, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0}
+    {TPS_EN,                     uhd::usrp::dboard_iface::UNIT_RX, 6,    0x1u << 6, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT2_SCLK,                  uhd::usrp::dboard_iface::UNIT_RX, 7,    0x1u << 7, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT2_MOSI,                  uhd::usrp::dboard_iface::UNIT_RX, 8,    0x1u << 8, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT2_LE,                    uhd::usrp::dboard_iface::UNIT_RX, 9,    0x1u << 9, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT1_C1,                    uhd::usrp::dboard_iface::UNIT_RX, 10,   0x1u << 10, 1,   gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT1_C2,                    uhd::usrp::dboard_iface::UNIT_RX, 11,   0x1u << 11, 1,   gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0}
 }};
 
 // ----------------------------------------------------------------------------
@@ -93,6 +99,11 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     // Safe defaults
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
     _set_gpio_field(GPIO_CPLD_RST_N, 0);
+    _set_gpio_field(ATT2_SCLK, 0);
+    _set_gpio_field(ATT2_MOSI, 0);
+    _set_gpio_field(ATT2_LE, 0);
+    _set_gpio_field(ATT1_C1, 0);
+    _set_gpio_field(ATT1_C2, 0);
     _flush_gpio();
 
     _set_gpio_field(RX_EN, 0);
@@ -158,6 +169,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
 
     _get_locked("RXLO");
 
+    set_att2_attenuation(12.5);
     UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm running");
 
 
@@ -247,6 +259,38 @@ void db_kintex7sdr_rx::_flush_gpio()
         _rx_gpio.dirty = false;
         _rx_gpio.mask  = 0;
     }
+}
+
+void db_kintex7sdr_rx::_att2_gpio_shift(uint8_t code7)
+{
+    _set_gpio_field(ATT2_LE, 0);
+    _set_gpio_field(ATT2_SCLK, 0);
+    _flush_gpio();
+
+    for (uint8_t bit_idx = 0; bit_idx < 8; ++bit_idx) {
+        const uint32_t bit = (bit_idx < 7) ? ((code7 >> bit_idx) & 0x1u) : 0u; // D7 must be 0
+        _set_gpio_field(ATT2_MOSI, bit);
+        _set_gpio_field(ATT2_SCLK, 0);
+        _flush_gpio();
+        std::this_thread::sleep_for(k_att2_gpio_delay);
+
+        _set_gpio_field(ATT2_SCLK, 1);
+        _flush_gpio();
+        std::this_thread::sleep_for(k_att2_gpio_delay);
+
+        _set_gpio_field(ATT2_SCLK, 0);
+        _flush_gpio();
+        std::this_thread::sleep_for(k_att2_gpio_delay);
+    }
+
+    std::this_thread::sleep_for(k_att2_gpio_delay);
+    _set_gpio_field(ATT2_LE, 1);
+    _flush_gpio();
+    std::this_thread::sleep_for(k_att2_gpio_delay);
+
+    _set_gpio_field(ATT2_LE, 0);
+    _set_gpio_field(ATT2_MOSI, 0);
+    _flush_gpio();
 }
 
 // ============================================================================
@@ -715,6 +759,62 @@ double db_kintex7sdr_rx::set_rx_gain(double gain)
     gain = KINTEX7SDR_RX_GAIN_RANGE.clip(gain);
     _rx_gain = gain;
     return _rx_gain;
+}
+
+void db_kintex7sdr_rx::set_att2_attenuation(double attn_db)
+{
+    if (attn_db < 0.0) {
+        attn_db = 0.0;
+    } else if (attn_db > 31.75) {
+        attn_db = 31.75;
+    }
+
+    uint32_t code = static_cast<uint32_t>(std::lround(attn_db * 4.0));
+    if (code > 0x7Fu) {
+        code = 0x7Fu;
+    }
+
+    if (_att2_code_valid) {
+        const int delta = static_cast<int>(code) - static_cast<int>(_att2_last_code);
+        if (std::abs(delta) <= 2) { // <= 0.5 dB
+            return;
+        }
+    }
+
+    _att2_gpio_shift(static_cast<uint8_t>(code));
+    _att2_last_code = static_cast<uint8_t>(code);
+    _att2_code_valid = true;
+}
+
+void db_kintex7sdr_rx::set_att1_attenuation(double attn_db)
+{
+    // PE43205: 0/6/12/18 dB via C1/C2
+    if (attn_db < 0.0) {
+        attn_db = 0.0;
+    } else if (attn_db > 18.0) {
+        attn_db = 18.0;
+    }
+
+    int idx = static_cast<int>(std::lround(attn_db / 6.0));
+    if (idx < 0) {
+        idx = 0;
+    } else if (idx > 3) {
+        idx = 3;
+    }
+
+    uint32_t c1 = 0;
+    uint32_t c2 = 0;
+    switch (idx) {
+    case 0: c1 = 0; c2 = 0; break; // 0 dB
+    case 1: c1 = 1; c2 = 0; break; // 6 dB
+    case 2: c1 = 0; c2 = 1; break; // 12 dB
+    case 3: c1 = 1; c2 = 1; break; // 18 dB
+    default: break;
+    }
+
+    _set_gpio_field(ATT1_C1, c1);
+    _set_gpio_field(ATT1_C2, c2);
+    _flush_gpio();
 }
 
 // Registration

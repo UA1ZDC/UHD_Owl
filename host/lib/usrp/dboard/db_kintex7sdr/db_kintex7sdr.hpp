@@ -31,13 +31,20 @@ public:
 
     double set_rx_frequency(double freq);
     double set_rx_gain(double gain);
+    void set_att2_attenuation(double attn_db);
+    void set_att1_attenuation(double attn_db);
 
     enum gpio_field_id : uint8_t {
         GPIO_SPI_ADDR   = 0,
         GPIO_CPLD_RST_N = 1,
         RX_LO_LOCKED    = 2,
         RX_EN           = 3,
-        TPS_EN          = 4
+        TPS_EN          = 4,
+        ATT2_SCLK       = 5,
+        ATT2_MOSI       = 6,
+        ATT2_LE         = 7,
+        ATT1_C1         = 8,
+        ATT1_C2         = 9
     };
 
     struct gpio_field_info_t {
@@ -55,7 +62,7 @@ public:
     };
 
 private:
-    static const std::array<gpio_field_info_t, 5> gpio_field_info;
+    static const std::array<gpio_field_info_t, 10> gpio_field_info;
 
     struct gpio_reg_cache {
         bool dirty;
@@ -79,6 +86,7 @@ private:
     void _set_gpio_field(gpio_field_id id, uint32_t v);
     uint32_t _get_gpio_field(gpio_field_id id);
     void _flush_gpio();
+    void _att2_gpio_shift(uint8_t code7);
 
     sensor_value_t _get_locked(const std::string& pll_name);
 
@@ -158,6 +166,10 @@ ltc5594::lo_drive_mode_t _ltc5594_lo_mode{ltc5594::lo_drive_mode_t::differential
     std::size_t _ltc5594_last_match_idx{static_cast<std::size_t>(-1)};
     uint8_t _ltc5594_last_reg12{0};
     uint8_t _ltc5594_last_reg13{0};
+
+    // ATT2 (PE43711) cache to avoid redundant writes
+    uint8_t _att2_last_code{0};
+    bool _att2_code_valid{false};
     struct ltc5594_cal_cache_entry {
         // Placeholders for future closed-loop calibration.
         // We do NOT run auto-calibration yet; values are only applied if valid=true.

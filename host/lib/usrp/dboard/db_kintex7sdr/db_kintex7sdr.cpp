@@ -29,7 +29,7 @@ constexpr auto k_att2_gpio_delay = std::chrono::microseconds(1);
 // Board ranges (adjust to your HW)
 static const uhd::freq_range_t KINTEX7SDR_RX_FREQ_RANGE(300e6, 2.2e9);
 static const uhd::freq_range_t KINTEX7SDR_RX_BW_RANGE(100e6, 100e6);
-static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 49.75, 0.25);
+static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(-18.25, 31.5, 0.25);
 static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 
 enum spi_dest_t {
@@ -91,6 +91,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     : uhd::usrp::rx_dboard_base(args)
     , _iface(get_iface())
     , _spi_cfg(uhd::spi_config_t::EDGE_RISE)
+	, _ltc5594_lo_mode(ltc5594::lo_drive_mode_t::differential)
 {
     _init_gpio_map();
 
@@ -560,6 +561,18 @@ void db_kintex7sdr_rx::_ltc6948_deinit()
     _ltc6948_write_reg(ltc6948::REG4, reg4_safe, true /*force*/);
 }
 
+void db_kintex7sdr_rx::set_ltc6948_output_power(uint8_t level)
+{
+    if (level > 3) {
+        level = 3;
+    }
+
+    _ltc6948_init();
+    uint8_t regb = _ltc6948_regs[ltc6948::REGB];
+    regb = static_cast<uint8_t>((regb & ~ltc6948::REGB_RFO_MASK) | ((level & 0x3u) << 3));
+    _ltc6948_write_reg(ltc6948::REGB, regb);
+}
+
 // Choose OD/ND/NUM within +/-tol_hz. Criterion:
 //  1) VCO closest to mid-range (robustness)
 //  2) if almost equal, prefer larger OD (often better output phase noise due to division)
@@ -759,14 +772,14 @@ double db_kintex7sdr_rx::set_rx_gain(double gain)
     gain = KINTEX7SDR_RX_GAIN_RANGE.clip(gain);
     const double target_attn = KINTEX7SDR_RX_GAIN_RANGE.stop() - gain;
 
-    // LTC5594 IF amp gain control: 20 dB -> min, 30 dB -> max, linear in-between
+    // LTC5594 IF amp gain control: 10 dB -> min, 20 dB -> max, linear in-between
     double amp_gain_db = 8.0;
-    if (gain >= 30.0) {
+    if (gain >= 20.0) {
         amp_gain_db = 15.0;
-    } else if (gain <= 20.0) {
+    } else if (gain <= 10.0) {
         amp_gain_db = 8.0;
     } else {
-        amp_gain_db = 8.0 + (gain - 20.0) * (7.0 / 10.0);
+        amp_gain_db = 8.0 + (gain - 10.0) * (7.0 / 10.0);
     }
 
     if (!_ltc5594_amp_gain_valid || std::abs(amp_gain_db - _ltc5594_amp_gain_db) > 0.5) {
@@ -802,9 +815,10 @@ double db_kintex7sdr_rx::set_rx_gain(double gain)
 
     set_att1_attenuation(att1_db);
     set_att2_attenuation(att2_db);
+    const double amp_gain_log = _ltc5594_amp_gain_valid ? _ltc5594_amp_gain_db : amp_gain_db;
     UHD_LOG_INFO("DB_KINTEX7SDR_RX",
-        (boost::format("ATT1=%.1f dB, ATT2=%.2f dB (target=%.2f dB)")
-            % att1_db % att2_db % target_attn).str());
+        (boost::format("ATT1=%.1f dB, ATT2=%.2f dB, AMPG=%.1f dB (target=%.2f dB)")
+            % att1_db % att2_db % amp_gain_log % target_attn).str());
     _rx_gain = gain;
     return _rx_gain;
 }

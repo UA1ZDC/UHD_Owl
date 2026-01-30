@@ -206,6 +206,29 @@ static constexpr std::array<lo_match_entry_t, 16> LO_MATCH_TABLE_SINGLE_ENDED = 
     {3500000000u, 9000000000ULL,    true,   0u, 0u,  0u}
 }};
 
+// Differential-mode table: currently identical to single-ended (datasheet table).
+static constexpr std::array<lo_match_entry_t, 16> LO_MATCH_TABLE_DIFFERENTIAL = {{
+    //  f_lo_min   f_lo_max_excl  BAND  CF1 LF1 CF2
+    { 300000000u,  339000000u,    false, 31u, 3u, 31u},
+    { 339000000u,  398000000u,    false, 21u, 3u, 24u},
+    { 398000000u,  419000000u,    false, 14u, 3u, 23u},
+    { 419000000u,  556000000u,    false, 17u, 2u, 31u},
+    { 556000000u,  625000000u,    false, 10u, 2u, 23u},
+    { 625000000u,  801000000u,    false, 15u, 1u, 31u},
+    { 801000000u,  831000000u,    false, 14u, 1u, 27u},
+    { 831000000u, 1046000000u,    false,  8u, 1u, 21u},
+
+    {1046000000u, 1242000000u,    true,  31u, 3u, 31u},
+    {1242000000u, 1411000000u,    true,  21u, 3u, 28u},
+    {1411000000u, 1696000000u,    true,  17u, 2u, 26u},
+    {1696000000u, 2070000000u,    true,  15u, 1u, 31u},
+    {2070000000u, 2470000000u,    true,   8u, 1u, 21u},
+
+    {2470000000u, 2980000000u,    true,   2u, 1u, 10u},
+    {2980000000u, 3500000000u,    true,   1u, 0u, 19u},
+    {3500000000u, 9000000000ULL,    true,   0u, 0u,  0u}
+}};
+
 enum class lo_drive_mode_t {
     single_ended,
     differential
@@ -245,10 +268,27 @@ static inline lo_match_result_t resolve_lo_match_single_ended(double f_lo_hz)
 static inline lo_match_result_t resolve_lo_match(double f_lo_hz, lo_drive_mode_t mode)
 {
     // Datasheet provides explicit LO matching settings for single-ended LO drive.
-    // For differential LO drive, we currently reuse the same table as a practical
-    // starting point. If lab characterization shows different optimal settings,
-    // add a dedicated differential table and switch on "mode".
-    (void)mode;
+    if (mode == lo_drive_mode_t::differential) {
+        uint64_t fhz = 0;
+        if (f_lo_hz > 0.0) {
+            const double lim = double(std::numeric_limits<uint64_t>::max());
+            fhz = (f_lo_hz >= lim) ? std::numeric_limits<uint64_t>::max()
+                                   : static_cast<uint64_t>(f_lo_hz);
+        }
+
+        for (std::size_t i = 0; i < LO_MATCH_TABLE_DIFFERENTIAL.size(); i++) {
+            const auto& e = LO_MATCH_TABLE_DIFFERENTIAL[i];
+            if (fhz >= e.f_lo_min_hz && fhz < e.f_lo_max_hz_excl) {
+                lo_match_result_t r;
+                r.valid = true;
+                r.table_index = i;
+                r.reg12 = pack_reg12(DEFAULT_LVCM, e.cf1);
+                r.reg13 = pack_reg13(e.band, e.lf1, e.cf2);
+                return r;
+            }
+        }
+        return lo_match_result_t{};
+    }
     return resolve_lo_match_single_ended(f_lo_hz);
 }
 

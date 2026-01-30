@@ -111,6 +111,9 @@ private:
     bool _ltc6948_resolve_pll(double target_freq, double tol_hz, ltc6948_pll_config& cfg);
     void _ltc6948_apply_pll_config(const ltc6948_pll_config& cfg);
 
+    // LTC6948 output power (RFO) helper
+    void set_ltc6948_output_power(uint8_t level);
+
     // LTC5594 (IQ demod) helpers
     void _ltc5594_init();
     void _ltc5594_deinit();

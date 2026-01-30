@@ -254,12 +254,12 @@ module top_module_full #(
         //.TPS_EN         (TPS_EN),
         //.LED_RX         (LED_RX),
 
-        .ATT1_RX_C1     (ATT1_RX_C1),
-        .ATT1_RX_C2     (ATT1_RX_C2),
+        //.ATT1_RX_C1     (ATT1_RX_C1),
+        //.ATT1_RX_C2     (ATT1_RX_C2),
 
-        .ATT2_RX_LE     (ATT2_RX_LE),
-        .ATT2_SCLK_RX   (ATT2_SCLK_RX),
-        .ATT2_MOSI_RX   (ATT2_MOSI_RX),
+        //.ATT2_RX_LE     (ATT2_RX_LE),
+        //.ATT2_SCLK_RX   (ATT2_SCLK_RX),
+        //.ATT2_MOSI_RX   (ATT2_MOSI_RX),
 
         .rd_word_for_cmd (rd_word_for_cmd),
         .clr_err_invalid_sel_evt (clr_err_invalid_sel_evt)
@@ -271,6 +271,13 @@ module top_module_full #(
 	 
 	 assign CPLD_o[4] = STAT_LTC6948;
 
+	 assign ATT2_SCLK_RX = CPLD_i[7];
+	 assign ATT2_MOSI_RX = CPLD_i[8];
+	 assign ATT2_RX_LE 	= CPLD_i[9];
+	
+    // ATT control	
+	 assign ATT1_RX_C1 = CPLD_i[10];
+	 assign ATT1_RX_C2 = CPLD_i[11];
 
 endmodule
 

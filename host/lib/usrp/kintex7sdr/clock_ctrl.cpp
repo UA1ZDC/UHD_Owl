@@ -250,17 +250,17 @@ private:
             case kintex7sdr_iface::USRP_N210_XK:
                 _ad9516_regs.power_down_lvpecl_out2 = (enb) ? ad9516_regs_t::POWER_DOWN_LVPECL_OUT2_NORMAL
                                                             : ad9516_regs_t::POWER_DOWN_LVPECL_OUT2_SAFE_PD;
-                _ad9516_regs.output_level_lvpecl_out2 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT2_780MV;
+                _ad9516_regs.output_level_lvpecl_out2 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT2_960MV;
                 _ad9516_regs.divider1_bypass = 1;
 
                 _ad9516_regs.power_down_lvpecl_out3 = (enb) ? ad9516_regs_t::POWER_DOWN_LVPECL_OUT3_NORMAL
                                                             : ad9516_regs_t::POWER_DOWN_LVPECL_OUT3_SAFE_PD;
-                _ad9516_regs.output_level_lvpecl_out3 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT3_780MV;
+                _ad9516_regs.output_level_lvpecl_out3 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT3_960MV;
                 break;
             case kintex7sdr_iface::USRP_N210_XA:
                 _ad9516_regs.power_down_lvpecl_out0 = (enb) ? ad9516_regs_t::POWER_DOWN_LVPECL_OUT0_NORMAL
                                                             : ad9516_regs_t::POWER_DOWN_LVPECL_OUT0_SAFE_PD;
-                _ad9516_regs.output_level_lvpecl_out0 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT0_780MV;
+                _ad9516_regs.output_level_lvpecl_out0 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT0_960MV;
                 _ad9516_regs.divider0_bypass = 1;
                 break;
             default:
@@ -278,7 +278,7 @@ private:
     void enable_adc_clock(bool enb) {
         _ad9516_regs.power_down_lvpecl_out1 = enb ? ad9516_regs_t::POWER_DOWN_LVPECL_OUT1_NORMAL
                                                   : ad9516_regs_t::POWER_DOWN_LVPECL_OUT1_SAFE_PD;
-        _ad9516_regs.output_level_lvpecl_out1 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT1_780MV;
+        _ad9516_regs.output_level_lvpecl_out1 = ad9516_regs_t::OUTPUT_LEVEL_LVPECL_OUT1_960MV;
         _ad9516_regs.divider0_bypass = 1;
 
         this->write_reg(clk_regs.output(clk_regs.adc));

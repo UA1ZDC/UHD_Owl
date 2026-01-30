@@ -177,6 +177,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
 
 
     set_ltc5594_amp_gain(10.0);
+    set_ltc5594_dc_offset(0.0, 0.0);
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
@@ -815,10 +816,10 @@ double db_kintex7sdr_rx::set_rx_gain(double gain)
 
     set_att1_attenuation(att1_db);
     set_att2_attenuation(att2_db);
-    const double amp_gain_log = _ltc5594_amp_gain_valid ? _ltc5594_amp_gain_db : amp_gain_db;
-    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
-        (boost::format("ATT1=%.1f dB, ATT2=%.2f dB, AMPG=%.1f dB (target=%.2f dB)")
-            % att1_db % att2_db % amp_gain_log % target_attn).str());
+    // const double amp_gain_log = _ltc5594_amp_gain_valid ? _ltc5594_amp_gain_db : amp_gain_db;
+    // UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+    //     (boost::format("ATT1=%.1f dB, ATT2=%.2f dB, AMPG=%.1f dB (target=%.2f dB)")
+    //         % att1_db % att2_db % amp_gain_log % target_attn).str());
     _rx_gain = gain;
     return _rx_gain;
 }
@@ -921,6 +922,32 @@ void db_kintex7sdr_rx::set_ltc5594_amp_gain(double gain_db)
     _ltc5594_write_reg(ltc5594::REG_PHA0_MISC, new_reg15);
     _ltc5594_amp_gain_db = 8.0 + static_cast<double>(code);
     _ltc5594_amp_gain_valid = true;
+}
+
+void db_kintex7sdr_rx::set_ltc5594_dc_offset(double offset_i_mv, double offset_q_mv)
+{
+    // DCOI/DCOQ: 0x80 = ~0 mV. Step ~0.64 mV, range approx +/-75 mV.
+    constexpr double k_step_mv = 0.640;
+    constexpr double k_min_mv = -75.0;
+    constexpr double k_max_mv = 75.0;
+
+    auto clamp_mv = [](double v) {
+        if (v < k_min_mv) return k_min_mv;
+        if (v > k_max_mv) return k_max_mv;
+        return v;
+    };
+
+    const int code_i = static_cast<int>(std::lround(clamp_mv(offset_i_mv) / k_step_mv)) + 0x80;
+    const int code_q = static_cast<int>(std::lround(clamp_mv(offset_q_mv) / k_step_mv)) + 0x80;
+    const uint8_t dco_i = static_cast<uint8_t>(std::min(0xFF, std::max(0x00, code_i)));
+    const uint8_t dco_q = static_cast<uint8_t>(std::min(0xFF, std::max(0x00, code_q)));
+
+    if (!_ltc5594_initialized) {
+        _ltc5594_init();
+    }
+
+    _ltc5594_write_reg(ltc5594::REG_DCOI, dco_i, true);
+    _ltc5594_write_reg(ltc5594::REG_DCOQ, dco_q, true);
 }
 
 // Registration

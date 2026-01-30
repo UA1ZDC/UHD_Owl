@@ -34,6 +34,7 @@ public:
     void set_att2_attenuation(double attn_db);
     void set_att1_attenuation(double attn_db);
     void set_ltc5594_amp_gain(double gain_db);
+    void set_ltc5594_dc_offset(double offset_i_mv, double offset_q_mv);
 
     enum gpio_field_id : uint8_t {
         GPIO_SPI_ADDR   = 0,

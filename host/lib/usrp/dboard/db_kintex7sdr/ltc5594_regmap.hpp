@@ -154,7 +154,7 @@ static constexpr uint8_t BIT_EADJ = (1u << 5);
 static constexpr uint8_t BIT_EAMP = (1u << 4);
 static constexpr uint8_t BIT_SRST = (1u << 3);
 
-static constexpr uint8_t ENABLE_ALL = static_cast<uint8_t>(BIT_EDEM | BIT_EDC | BIT_EADJ | BIT_EAMP);
+static constexpr uint8_t ENABLE_ALL = static_cast<uint8_t>(BIT_EDEM | BIT_EAMP);
 } // namespace bctl
 
 static inline uint8_t pack_bctl(uint8_t enable_mask, bool srst)

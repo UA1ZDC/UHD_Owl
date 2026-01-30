@@ -69,7 +69,7 @@ constexpr bool k_ltc6948_bst = true;
 constexpr ltc6948::filt_t k_ltc6948_filt = ltc6948::filt_t::f0; // your validated FILT=0 for 100MHz ref
 constexpr ltc6948::rfo_t  k_ltc6948_rfo  = ltc6948::rfo_t::lvl3;
 
-constexpr uint8_t k_ltc6948_bd = 4;
+constexpr uint8_t k_ltc6948_bd = 8;
 constexpr ltc6948::ldov_t k_ltc6948_ldov = ltc6948::ldov_t::v2;
 constexpr bool k_ltc6948_ldoen = true;
 
@@ -159,17 +159,33 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     _get_locked("RXLO");
 
     UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm running");
+
+
+
+    _ltc5594_write_reg(ltc5594::REG_PHA0_MISC,
+            (0x6a & (~(0x7 << 4))) | (0x7 << 4), true);
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
 {
     UHD_SAFE_CALL(
-        _iface->set_pin_ctrl(dboard_iface::UNIT_RX, uint32_t(0));
-        _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
-        _set_gpio_field(GPIO_CPLD_RST_N, 0);
-        _set_gpio_field(RX_EN, 0);
-        _flush_gpio();
-        UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm toast i'm done");
+	_ltc5594_write_reg(ltc5594::REG_BCTL,
+			ltc5594::pack_bctl(0x0, false),
+			true /*force*/);
+
+    // REG2: keep mute-during-calibration, but unmute output, clear POR/powerdowns
+    _ltc6948_regs[ltc6948::REG2] = static_cast<uint8_t>(
+        (_ltc6948_regs[ltc6948::REG2]
+            & (~ltc6948::REG2_OMUTE)));
+
+    _ltc6948_write_reg(ltc6948::REG2, _ltc6948_regs[ltc6948::REG2], true);
+
+    _iface->set_pin_ctrl(dboard_iface::UNIT_RX, uint32_t(0));
+    _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
+    _set_gpio_field(GPIO_CPLD_RST_N, 0);
+    _set_gpio_field(RX_EN, 0);
+    _flush_gpio();
+    UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm toast i'm done");
     )
 }
 

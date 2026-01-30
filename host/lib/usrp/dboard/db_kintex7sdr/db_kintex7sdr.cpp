@@ -29,7 +29,7 @@ constexpr auto k_att2_gpio_delay = std::chrono::microseconds(1);
 // Board ranges (adjust to your HW)
 static const uhd::freq_range_t KINTEX7SDR_RX_FREQ_RANGE(300e6, 2.2e9);
 static const uhd::freq_range_t KINTEX7SDR_RX_BW_RANGE(100e6, 100e6);
-static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 31.5, 0.5);
+static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 49.75, 0.25);
 static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 
 enum spi_dest_t {
@@ -169,6 +169,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
 
     _get_locked("RXLO");
 
+    set_att1_attenuation(3.0);
     set_att2_attenuation(12.5);
     UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm running");
 
@@ -757,6 +758,40 @@ sensor_value_t db_kintex7sdr_rx::_get_locked([[maybe_unused]] const std::string&
 double db_kintex7sdr_rx::set_rx_gain(double gain)
 {
     gain = KINTEX7SDR_RX_GAIN_RANGE.clip(gain);
+    const double target_attn = KINTEX7SDR_RX_GAIN_RANGE.stop() - gain;
+
+    double current_attn = std::numeric_limits<double>::quiet_NaN();
+    if (_att1_code_valid && _att2_code_valid) {
+        const double att1_db = static_cast<double>(_att1_last_code) * 6.0;
+        const double att2_db = static_cast<double>(_att2_last_code) * 0.25;
+        current_attn = att1_db + att2_db;
+    }
+
+    if (std::isfinite(current_attn) && std::abs(target_attn - current_attn) <= 0.5) {
+        _rx_gain = gain;
+        return _rx_gain;
+    }
+
+    // Use ATT1 for ~1/3 of total attenuation (coarse), ATT2 for the remainder (fine)
+    double att1_db = std::round((target_attn / 3.0) / 6.0) * 6.0;
+    if (att1_db < 0.0) {
+        att1_db = 0.0;
+    } else if (att1_db > 18.0) {
+        att1_db = 18.0;
+    }
+
+    double att2_db = target_attn - att1_db;
+    if (att2_db < 0.0) {
+        att2_db = 0.0;
+    } else if (att2_db > 31.75) {
+        att2_db = 31.75;
+    }
+
+    set_att1_attenuation(att1_db);
+    set_att2_attenuation(att2_db);
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+        (boost::format("ATT1=%.1f dB, ATT2=%.2f dB (target=%.2f dB)")
+            % att1_db % att2_db % target_attn).str());
     _rx_gain = gain;
     return _rx_gain;
 }
@@ -812,9 +847,16 @@ void db_kintex7sdr_rx::set_att1_attenuation(double attn_db)
     default: break;
     }
 
+    const uint8_t code = static_cast<uint8_t>((c1 ? 0x1u : 0u) | (c2 ? 0x2u : 0u));
+    if (_att1_code_valid && _att1_last_code == code) {
+        return;
+    }
+
     _set_gpio_field(ATT1_C1, c1);
     _set_gpio_field(ATT1_C2, c2);
     _flush_gpio();
+    _att1_last_code = code;
+    _att1_code_valid = true;
 }
 
 // Registration

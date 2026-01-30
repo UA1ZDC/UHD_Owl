@@ -170,6 +170,10 @@ ltc5594::lo_drive_mode_t _ltc5594_lo_mode{ltc5594::lo_drive_mode_t::differential
     // ATT2 (PE43711) cache to avoid redundant writes
     uint8_t _att2_last_code{0};
     bool _att2_code_valid{false};
+
+    // ATT1 (PE43205) cache to avoid redundant writes
+    uint8_t _att1_last_code{0};
+    bool _att1_code_valid{false};
     struct ltc5594_cal_cache_entry {
         // Placeholders for future closed-loop calibration.
         // We do NOT run auto-calibration yet; values are only applied if valid=true.

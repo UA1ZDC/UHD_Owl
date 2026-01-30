@@ -169,16 +169,8 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
 {
     UHD_SAFE_CALL(
-	_ltc5594_write_reg(ltc5594::REG_BCTL,
-			ltc5594::pack_bctl(0x0, false),
-			true /*force*/);
-
-    // REG2: keep mute-during-calibration, but unmute output, clear POR/powerdowns
-    _ltc6948_regs[ltc6948::REG2] = static_cast<uint8_t>(
-        (_ltc6948_regs[ltc6948::REG2]
-            & (~ltc6948::REG2_OMUTE)));
-
-    _ltc6948_write_reg(ltc6948::REG2, _ltc6948_regs[ltc6948::REG2], true);
+    _ltc5594_deinit();
+    _ltc6948_deinit();
 
     _iface->set_pin_ctrl(dboard_iface::UNIT_RX, uint32_t(0));
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
@@ -330,6 +322,15 @@ void db_kintex7sdr_rx::_ltc5594_init()
         (boost::format("LTC5594 CHIPID = 0x%1$02X") % unsigned(chipid)).str());
 
     _ltc5594_initialized = true;
+}
+
+void db_kintex7sdr_rx::_ltc5594_deinit()
+{
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", "LTC5594 deinit: disable blocks and reset");
+    // Put the IQ demod into a quiet, low-power state.
+    _ltc5594_write_reg(ltc5594::REG_BCTL, ltc5594::pack_bctl(0x0, true), true /*force*/);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    _ltc5594_write_reg(ltc5594::REG_BCTL, ltc5594::pack_bctl(0x0, false), true /*force*/);
 }
 
 void db_kintex7sdr_rx::_ltc5594_maybe_run_autocal(double /*lo_hz*/)
@@ -493,6 +494,26 @@ void db_kintex7sdr_rx::_ltc6948_init()
 
     _ltc6948_read_part_code();
     _ltc6948_initialized = true;
+}
+
+void db_kintex7sdr_rx::_ltc6948_deinit()
+{
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", "LTC6948 deinit: mute output and power down");
+    const uint8_t reg2_base = _ltc6948_initialized ? _ltc6948_regs[ltc6948::REG2]
+                                                    : ltc6948::DEFAULT_REGS[ltc6948::REG2];
+    const uint8_t reg2_mute = static_cast<uint8_t>(reg2_base | ltc6948::REG2_OMUTE);
+    _ltc6948_write_reg(ltc6948::REG2, reg2_mute, true /*force*/);
+
+    const uint8_t reg2_pd = static_cast<uint8_t>(
+        reg2_mute | ltc6948::REG2_PDALL | ltc6948::REG2_PDPLL | ltc6948::REG2_PDVCO
+        | ltc6948::REG2_PDOUT | ltc6948::REG2_PDFN);
+    _ltc6948_write_reg(ltc6948::REG2, reg2_pd, true /*force*/);
+
+    const uint8_t reg4_base = _ltc6948_initialized ? _ltc6948_regs[ltc6948::REG4]
+                                                    : ltc6948::DEFAULT_REGS[ltc6948::REG4];
+    const uint8_t reg4_safe = ltc6948::reg4_set_cple(ltc6948::reg4_set_ldoen(reg4_base, false),
+        false);
+    _ltc6948_write_reg(ltc6948::REG4, reg4_safe, true /*force*/);
 }
 
 // Choose OD/ND/NUM within +/-tol_hz. Criterion:

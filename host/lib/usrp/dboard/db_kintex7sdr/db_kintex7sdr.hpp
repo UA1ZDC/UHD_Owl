@@ -94,6 +94,7 @@ private:
     };
 
     void _ltc6948_init();
+    void _ltc6948_deinit();
     uint8_t _ltc6948_read_reg(uint8_t addr);
     void _ltc6948_write_reg(uint8_t addr, uint8_t value, bool force = false);
     void _ltc6948_update_bits(uint8_t addr, uint8_t mask, uint8_t value);
@@ -103,6 +104,7 @@ private:
 
     // LTC5594 (IQ demod) helpers
     void _ltc5594_init();
+    void _ltc5594_deinit();
     uint8_t _ltc5594_read_reg(uint8_t addr);
     void _ltc5594_write_reg(uint8_t addr, uint8_t value, bool force = false);
     void _ltc5594_apply_for_lo(double lo_hz);

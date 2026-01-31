@@ -31,13 +31,22 @@ public:
 
     double set_rx_frequency(double freq);
     double set_rx_gain(double gain);
+    void set_att2_attenuation(double attn_db);
+    void set_att1_attenuation(double attn_db);
+    void set_ltc5594_amp_gain(double gain_db);
+    void set_ltc5594_dc_offset(double offset_i_mv, double offset_q_mv);
 
     enum gpio_field_id : uint8_t {
         GPIO_SPI_ADDR   = 0,
         GPIO_CPLD_RST_N = 1,
         RX_LO_LOCKED    = 2,
         RX_EN           = 3,
-        TPS_EN          = 4
+        TPS_EN          = 4,
+        ATT2_SCLK       = 5,
+        ATT2_MOSI       = 6,
+        ATT2_LE         = 7,
+        ATT1_C1         = 8,
+        ATT1_C2         = 9
     };
 
     struct gpio_field_info_t {
@@ -55,7 +64,7 @@ public:
     };
 
 private:
-    static const std::array<gpio_field_info_t, 5> gpio_field_info;
+    static const std::array<gpio_field_info_t, 10> gpio_field_info;
 
     struct gpio_reg_cache {
         bool dirty;
@@ -79,6 +88,7 @@ private:
     void _set_gpio_field(gpio_field_id id, uint32_t v);
     uint32_t _get_gpio_field(gpio_field_id id);
     void _flush_gpio();
+    void _att2_gpio_shift(uint8_t code7);
 
     sensor_value_t _get_locked(const std::string& pll_name);
 
@@ -94,6 +104,7 @@ private:
     };
 
     void _ltc6948_init();
+    void _ltc6948_deinit();
     uint8_t _ltc6948_read_reg(uint8_t addr);
     void _ltc6948_write_reg(uint8_t addr, uint8_t value, bool force = false);
     void _ltc6948_update_bits(uint8_t addr, uint8_t mask, uint8_t value);
@@ -101,8 +112,12 @@ private:
     bool _ltc6948_resolve_pll(double target_freq, double tol_hz, ltc6948_pll_config& cfg);
     void _ltc6948_apply_pll_config(const ltc6948_pll_config& cfg);
 
+    // LTC6948 output power (RFO) helper
+    void set_ltc6948_output_power(uint8_t level);
+
     // LTC5594 (IQ demod) helpers
     void _ltc5594_init();
+    void _ltc5594_deinit();
     uint8_t _ltc5594_read_reg(uint8_t addr);
     void _ltc5594_write_reg(uint8_t addr, uint8_t value, bool force = false);
     void _ltc5594_apply_for_lo(double lo_hz);
@@ -156,6 +171,18 @@ ltc5594::lo_drive_mode_t _ltc5594_lo_mode{ltc5594::lo_drive_mode_t::differential
     std::size_t _ltc5594_last_match_idx{static_cast<std::size_t>(-1)};
     uint8_t _ltc5594_last_reg12{0};
     uint8_t _ltc5594_last_reg13{0};
+
+    // ATT2 (PE43711) cache to avoid redundant writes
+    uint8_t _att2_last_code{0};
+    bool _att2_code_valid{false};
+
+    // ATT1 (PE43205) cache to avoid redundant writes
+    uint8_t _att1_last_code{0};
+    bool _att1_code_valid{false};
+
+    // LTC5594 IF amp gain cache
+    double _ltc5594_amp_gain_db{0.0};
+    bool _ltc5594_amp_gain_valid{false};
     struct ltc5594_cal_cache_entry {
         // Placeholders for future closed-loop calibration.
         // We do NOT run auto-calibration yet; values are only applied if valid=true.

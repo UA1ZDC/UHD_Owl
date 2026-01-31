@@ -24,11 +24,12 @@ namespace uhd { namespace usrp { namespace dboard { namespace db_kintex7sdr {
  * Constants
  **********************************************************************/
 constexpr double fMHz = 1e6;
+constexpr auto k_att2_gpio_delay = std::chrono::microseconds(1);
 
 // Board ranges (adjust to your HW)
 static const uhd::freq_range_t KINTEX7SDR_RX_FREQ_RANGE(300e6, 2.2e9);
 static const uhd::freq_range_t KINTEX7SDR_RX_BW_RANGE(100e6, 100e6);
-static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(0.0, 31.5, 0.5);
+static const uhd::gain_range_t KINTEX7SDR_RX_GAIN_RANGE(-18.25, 31.5, 0.25);
 static const std::vector<std::string> KINTEX7SDR_RX_ANTENNAS{"RX1"};
 
 enum spi_dest_t {
@@ -40,14 +41,19 @@ enum spi_dest_t {
     SPI_DEST_NONE_3B  = 0x7u
 };
 
-const std::array<db_kintex7sdr_rx::gpio_field_info_t, 5>
+const std::array<db_kintex7sdr_rx::gpio_field_info_t, 10>
 db_kintex7sdr_rx::gpio_field_info = {{
     // Field                     Unit                          Offset Mask        Width Dir                                ATR   IDLE TX RX FDX
     {GPIO_SPI_ADDR,              uhd::usrp::dboard_iface::UNIT_RX, 0,    0x7u << 0, 3,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
     {GPIO_CPLD_RST_N,            uhd::usrp::dboard_iface::UNIT_RX, 3,    0x1u << 3, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
     {RX_LO_LOCKED,               uhd::usrp::dboard_iface::UNIT_RX, 4,    0x1u << 4, 1,    gpio_field_info_t::fpga_INPUT,  false, 0,   0, 0, 0},
     {RX_EN,                      uhd::usrp::dboard_iface::UNIT_RX, 5,    0x1u << 5, 1,    gpio_field_info_t::fpga_OUTPUT, true,  0,   0, 1, 0},
-    {TPS_EN,                     uhd::usrp::dboard_iface::UNIT_RX, 6,    0x1u << 6, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0}
+    {TPS_EN,                     uhd::usrp::dboard_iface::UNIT_RX, 6,    0x1u << 6, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT2_SCLK,                  uhd::usrp::dboard_iface::UNIT_RX, 7,    0x1u << 7, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT2_MOSI,                  uhd::usrp::dboard_iface::UNIT_RX, 8,    0x1u << 8, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT2_LE,                    uhd::usrp::dboard_iface::UNIT_RX, 9,    0x1u << 9, 1,    gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT1_C1,                    uhd::usrp::dboard_iface::UNIT_RX, 10,   0x1u << 10, 1,   gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0},
+    {ATT1_C2,                    uhd::usrp::dboard_iface::UNIT_RX, 11,   0x1u << 11, 1,   gpio_field_info_t::fpga_OUTPUT, false, 0,   0, 0, 0}
 }};
 
 // ----------------------------------------------------------------------------
@@ -85,6 +91,7 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     : uhd::usrp::rx_dboard_base(args)
     , _iface(get_iface())
     , _spi_cfg(uhd::spi_config_t::EDGE_RISE)
+	, _ltc5594_lo_mode(ltc5594::lo_drive_mode_t::differential)
 {
     _init_gpio_map();
 
@@ -93,6 +100,11 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
     // Safe defaults
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
     _set_gpio_field(GPIO_CPLD_RST_N, 0);
+    _set_gpio_field(ATT2_SCLK, 0);
+    _set_gpio_field(ATT2_MOSI, 0);
+    _set_gpio_field(ATT2_LE, 0);
+    _set_gpio_field(ATT1_C1, 0);
+    _set_gpio_field(ATT1_C2, 0);
     _flush_gpio();
 
     _set_gpio_field(RX_EN, 0);
@@ -158,27 +170,21 @@ db_kintex7sdr_rx::db_kintex7sdr_rx(dboard_base::ctor_args_t args)
 
     _get_locked("RXLO");
 
+    set_att1_attenuation(6.0);
+    set_att2_attenuation(12.5);
     UHD_LOG_WARNING("KINTEX7SDR_RX", "I'm running");
 
 
 
-    _ltc5594_write_reg(ltc5594::REG_PHA0_MISC,
-            (0x6a & (~(0x7 << 4))) | (0x7 << 4), true);
+    set_ltc5594_amp_gain(10.0);
+    set_ltc5594_dc_offset(0.0, 0.0);
 }
 
 db_kintex7sdr_rx::~db_kintex7sdr_rx(void)
 {
     UHD_SAFE_CALL(
-	_ltc5594_write_reg(ltc5594::REG_BCTL,
-			ltc5594::pack_bctl(0x0, false),
-			true /*force*/);
-
-    // REG2: keep mute-during-calibration, but unmute output, clear POR/powerdowns
-    _ltc6948_regs[ltc6948::REG2] = static_cast<uint8_t>(
-        (_ltc6948_regs[ltc6948::REG2]
-            & (~ltc6948::REG2_OMUTE)));
-
-    _ltc6948_write_reg(ltc6948::REG2, _ltc6948_regs[ltc6948::REG2], true);
+    _ltc5594_deinit();
+    _ltc6948_deinit();
 
     _iface->set_pin_ctrl(dboard_iface::UNIT_RX, uint32_t(0));
     _set_gpio_field(GPIO_SPI_ADDR, SPI_DEST_NONE_3B);
@@ -257,6 +263,38 @@ void db_kintex7sdr_rx::_flush_gpio()
     }
 }
 
+void db_kintex7sdr_rx::_att2_gpio_shift(uint8_t code7)
+{
+    _set_gpio_field(ATT2_LE, 0);
+    _set_gpio_field(ATT2_SCLK, 0);
+    _flush_gpio();
+
+    for (uint8_t bit_idx = 0; bit_idx < 8; ++bit_idx) {
+        const uint32_t bit = (bit_idx < 7) ? ((code7 >> bit_idx) & 0x1u) : 0u; // D7 must be 0
+        _set_gpio_field(ATT2_MOSI, bit);
+        _set_gpio_field(ATT2_SCLK, 0);
+        _flush_gpio();
+        std::this_thread::sleep_for(k_att2_gpio_delay);
+
+        _set_gpio_field(ATT2_SCLK, 1);
+        _flush_gpio();
+        std::this_thread::sleep_for(k_att2_gpio_delay);
+
+        _set_gpio_field(ATT2_SCLK, 0);
+        _flush_gpio();
+        std::this_thread::sleep_for(k_att2_gpio_delay);
+    }
+
+    std::this_thread::sleep_for(k_att2_gpio_delay);
+    _set_gpio_field(ATT2_LE, 1);
+    _flush_gpio();
+    std::this_thread::sleep_for(k_att2_gpio_delay);
+
+    _set_gpio_field(ATT2_LE, 0);
+    _set_gpio_field(ATT2_MOSI, 0);
+    _flush_gpio();
+}
+
 // ============================================================================
 // SPI helper: route + xfer under one mutex
 // ============================================================================
@@ -330,6 +368,15 @@ void db_kintex7sdr_rx::_ltc5594_init()
         (boost::format("LTC5594 CHIPID = 0x%1$02X") % unsigned(chipid)).str());
 
     _ltc5594_initialized = true;
+}
+
+void db_kintex7sdr_rx::_ltc5594_deinit()
+{
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", "LTC5594 deinit: disable blocks and reset");
+    // Put the IQ demod into a quiet, low-power state.
+    _ltc5594_write_reg(ltc5594::REG_BCTL, ltc5594::pack_bctl(0x0, true), true /*force*/);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    _ltc5594_write_reg(ltc5594::REG_BCTL, ltc5594::pack_bctl(0x0, false), true /*force*/);
 }
 
 void db_kintex7sdr_rx::_ltc5594_maybe_run_autocal(double /*lo_hz*/)
@@ -493,6 +540,38 @@ void db_kintex7sdr_rx::_ltc6948_init()
 
     _ltc6948_read_part_code();
     _ltc6948_initialized = true;
+}
+
+void db_kintex7sdr_rx::_ltc6948_deinit()
+{
+    UHD_LOG_INFO("DB_KINTEX7SDR_RX", "LTC6948 deinit: mute output and power down");
+    const uint8_t reg2_base = _ltc6948_initialized ? _ltc6948_regs[ltc6948::REG2]
+                                                    : ltc6948::DEFAULT_REGS[ltc6948::REG2];
+    const uint8_t reg2_mute = static_cast<uint8_t>(reg2_base | ltc6948::REG2_OMUTE);
+    _ltc6948_write_reg(ltc6948::REG2, reg2_mute, true /*force*/);
+
+    const uint8_t reg2_pd = static_cast<uint8_t>(
+        reg2_mute | ltc6948::REG2_PDALL | ltc6948::REG2_PDPLL | ltc6948::REG2_PDVCO
+        | ltc6948::REG2_PDOUT | ltc6948::REG2_PDFN);
+    _ltc6948_write_reg(ltc6948::REG2, reg2_pd, true /*force*/);
+
+    const uint8_t reg4_base = _ltc6948_initialized ? _ltc6948_regs[ltc6948::REG4]
+                                                    : ltc6948::DEFAULT_REGS[ltc6948::REG4];
+    const uint8_t reg4_safe = ltc6948::reg4_set_cple(ltc6948::reg4_set_ldoen(reg4_base, false),
+        false);
+    _ltc6948_write_reg(ltc6948::REG4, reg4_safe, true /*force*/);
+}
+
+void db_kintex7sdr_rx::set_ltc6948_output_power(uint8_t level)
+{
+    if (level > 3) {
+        level = 3;
+    }
+
+    _ltc6948_init();
+    uint8_t regb = _ltc6948_regs[ltc6948::REGB];
+    regb = static_cast<uint8_t>((regb & ~ltc6948::REGB_RFO_MASK) | ((level & 0x3u) << 3));
+    _ltc6948_write_reg(ltc6948::REGB, regb);
 }
 
 // Choose OD/ND/NUM within +/-tol_hz. Criterion:
@@ -692,8 +771,183 @@ sensor_value_t db_kintex7sdr_rx::_get_locked([[maybe_unused]] const std::string&
 double db_kintex7sdr_rx::set_rx_gain(double gain)
 {
     gain = KINTEX7SDR_RX_GAIN_RANGE.clip(gain);
+    const double target_attn = KINTEX7SDR_RX_GAIN_RANGE.stop() - gain;
+
+    // LTC5594 IF amp gain control: 10 dB -> min, 20 dB -> max, linear in-between
+    double amp_gain_db = 8.0;
+    if (gain >= 20.0) {
+        amp_gain_db = 15.0;
+    } else if (gain <= 10.0) {
+        amp_gain_db = 8.0;
+    } else {
+        amp_gain_db = 8.0 + (gain - 10.0) * (7.0 / 10.0);
+    }
+
+    if (!_ltc5594_amp_gain_valid || std::abs(amp_gain_db - _ltc5594_amp_gain_db) > 0.5) {
+        set_ltc5594_amp_gain(amp_gain_db);
+    }
+
+    double current_attn = std::numeric_limits<double>::quiet_NaN();
+    if (_att1_code_valid && _att2_code_valid) {
+        const double att1_db = static_cast<double>(_att1_last_code) * 6.0;
+        const double att2_db = static_cast<double>(_att2_last_code) * 0.25;
+        current_attn = att1_db + att2_db;
+    }
+
+    if (std::isfinite(current_attn) && std::abs(target_attn - current_attn) <= 0.5) {
+        _rx_gain = gain;
+        return _rx_gain;
+    }
+
+    // Use ATT1 for ~1/3 of total attenuation (coarse), ATT2 for the remainder (fine)
+    double att1_db = std::round((target_attn / 3.0) / 6.0) * 6.0;
+    if (att1_db < 0.0) {
+        att1_db = 0.0;
+    } else if (att1_db > 18.0) {
+        att1_db = 18.0;
+    }
+
+    double att2_db = target_attn - att1_db;
+    if (att2_db < 0.0) {
+        att2_db = 0.0;
+    } else if (att2_db > 31.75) {
+        att2_db = 31.75;
+    }
+
+    set_att1_attenuation(att1_db);
+    set_att2_attenuation(att2_db);
+    // const double amp_gain_log = _ltc5594_amp_gain_valid ? _ltc5594_amp_gain_db : amp_gain_db;
+    // UHD_LOG_INFO("DB_KINTEX7SDR_RX",
+    //     (boost::format("ATT1=%.1f dB, ATT2=%.2f dB, AMPG=%.1f dB (target=%.2f dB)")
+    //         % att1_db % att2_db % amp_gain_log % target_attn).str());
     _rx_gain = gain;
     return _rx_gain;
+}
+
+void db_kintex7sdr_rx::set_att2_attenuation(double attn_db)
+{
+    if (attn_db < 0.0) {
+        attn_db = 0.0;
+    } else if (attn_db > 31.75) {
+        attn_db = 31.75;
+    }
+
+    uint32_t code = static_cast<uint32_t>(std::lround(attn_db * 4.0));
+    if (code > 0x7Fu) {
+        code = 0x7Fu;
+    }
+
+    if (_att2_code_valid) {
+        const int delta = static_cast<int>(code) - static_cast<int>(_att2_last_code);
+        if (std::abs(delta) <= 2) { // <= 0.5 dB
+            return;
+        }
+    }
+
+    _att2_gpio_shift(static_cast<uint8_t>(code));
+    _att2_last_code = static_cast<uint8_t>(code);
+    _att2_code_valid = true;
+}
+
+void db_kintex7sdr_rx::set_att1_attenuation(double attn_db)
+{
+    // PE43205: 0/6/12/18 dB via C1/C2
+    if (attn_db < 0.0) {
+        attn_db = 0.0;
+    } else if (attn_db > 18.0) {
+        attn_db = 18.0;
+    }
+
+    int idx = static_cast<int>(std::lround(attn_db / 6.0));
+    if (idx < 0) {
+        idx = 0;
+    } else if (idx > 3) {
+        idx = 3;
+    }
+
+    uint32_t c1 = 0;
+    uint32_t c2 = 0;
+    switch (idx) {
+    case 0: c1 = 0; c2 = 0; break; // 0 dB
+    case 1: c1 = 1; c2 = 0; break; // 6 dB
+    case 2: c1 = 0; c2 = 1; break; // 12 dB
+    case 3: c1 = 1; c2 = 1; break; // 18 dB
+    default: break;
+    }
+
+    const uint8_t code = static_cast<uint8_t>((c1 ? 0x1u : 0u) | (c2 ? 0x2u : 0u));
+    if (_att1_code_valid && _att1_last_code == code) {
+        return;
+    }
+
+    _set_gpio_field(ATT1_C1, c1);
+    _set_gpio_field(ATT1_C2, c2);
+    _flush_gpio();
+    _att1_last_code = code;
+    _att1_code_valid = true;
+}
+
+void db_kintex7sdr_rx::set_ltc5594_amp_gain(double gain_db)
+{
+    // AMPG[2:0] in REG_PHA0_MISC (0x15) sets IF amp gain ~8..15 dB.
+    if (gain_db < 8.0) {
+        gain_db = 8.0;
+    } else if (gain_db > 15.0) {
+        gain_db = 15.0;
+    }
+
+    uint8_t code = static_cast<uint8_t>(std::lround(gain_db - 8.0));
+    if (code > 0x7u) {
+        code = 0x7u;
+    }
+
+    if (!_ltc5594_initialized) {
+        _ltc5594_init();
+    }
+
+    uint8_t reg15 = 0;
+    if (_ltc5594_reg_valid[ltc5594::REG_PHA0_MISC]) {
+        reg15 = _ltc5594_regs[ltc5594::REG_PHA0_MISC];
+    } else {
+        reg15 = _ltc5594_read_reg(ltc5594::REG_PHA0_MISC);
+    }
+
+    const uint8_t new_reg15 = static_cast<uint8_t>((reg15 & 0x8Fu) | ((code & 0x7u) << 4));
+    if (new_reg15 == reg15 && _ltc5594_reg_valid[ltc5594::REG_PHA0_MISC]) {
+        _ltc5594_amp_gain_db = 8.0 + static_cast<double>(code);
+        _ltc5594_amp_gain_valid = true;
+        return;
+    }
+
+    _ltc5594_write_reg(ltc5594::REG_PHA0_MISC, new_reg15);
+    _ltc5594_amp_gain_db = 8.0 + static_cast<double>(code);
+    _ltc5594_amp_gain_valid = true;
+}
+
+void db_kintex7sdr_rx::set_ltc5594_dc_offset(double offset_i_mv, double offset_q_mv)
+{
+    // DCOI/DCOQ: 0x80 = ~0 mV. Step ~0.64 mV, range approx +/-75 mV.
+    constexpr double k_step_mv = 0.640;
+    constexpr double k_min_mv = -75.0;
+    constexpr double k_max_mv = 75.0;
+
+    auto clamp_mv = [](double v) {
+        if (v < k_min_mv) return k_min_mv;
+        if (v > k_max_mv) return k_max_mv;
+        return v;
+    };
+
+    const int code_i = static_cast<int>(std::lround(clamp_mv(offset_i_mv) / k_step_mv)) + 0x80;
+    const int code_q = static_cast<int>(std::lround(clamp_mv(offset_q_mv) / k_step_mv)) + 0x80;
+    const uint8_t dco_i = static_cast<uint8_t>(std::min(0xFF, std::max(0x00, code_i)));
+    const uint8_t dco_q = static_cast<uint8_t>(std::min(0xFF, std::max(0x00, code_q)));
+
+    if (!_ltc5594_initialized) {
+        _ltc5594_init();
+    }
+
+    _ltc5594_write_reg(ltc5594::REG_DCOI, dco_i, true);
+    _ltc5594_write_reg(ltc5594::REG_DCOQ, dco_q, true);
 }
 
 // Registration

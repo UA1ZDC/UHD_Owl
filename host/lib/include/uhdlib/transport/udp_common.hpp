@@ -13,10 +13,11 @@
 #include <uhd/rfnoc/constants.hpp>
 #include <uhd/types/device_addr.hpp>
 #include <uhd/utils/log.hpp>
+#include <uhdlib/asio.hpp>
 #include <uhdlib/transport/links.hpp>
 #include <uhdlib/utils/narrow.hpp>
-#include <boost/asio.hpp>
 #include <boost/format.hpp>
+#include <chrono>
 #include <thread>
 
 namespace uhd { namespace transport {
@@ -81,17 +82,16 @@ UHD_INLINE bool wait_for_recv_ready(int sock_fd, int32_t timeout_ms)
 }
 
 UHD_INLINE socket_sptr open_udp_socket(
-    const std::string& addr, const std::string& port, boost::asio::io_service& io_service)
+    const std::string& addr, const std::string& port, boost::asio::io_context& io_context)
 {
     using udp = boost::asio::ip::udp;
 
     // resolve the address
-    udp::resolver resolver(io_service);
-    udp::resolver::query query(udp::v4(), addr, port);
-    udp::endpoint receiver_endpoint = *resolver.resolve(query);
+    udp::resolver resolver(io_context);
+    udp::endpoint receiver_endpoint = *resolver.resolve(udp::v4(), addr, port).begin();
 
     // create, open, and connect the socket
-    socket_sptr socket = socket_sptr(new udp::socket(io_service));
+    socket_sptr socket = socket_sptr(new udp::socket(io_context));
     socket->open(udp::v4());
     socket->connect(receiver_endpoint);
 
@@ -203,7 +203,11 @@ UHD_INLINE size_t resize_udp_socket_buffer_with_warning(
  * Determines a set of values to use for a UDP CHDR link based on defaults and
  * any overrides that the user may have provided. In cases where both device
  * and stream arguments can be used to override a value, note that the stream
- * argument will always take precedence.
+ * argument will always take precedence. If no values are requested, we fall
+ * back to the \p default_link_params.
+ *
+ * The \p recv_mtu and \p send_mtu always serve as upper bounds for the
+ * `recv_frame_size` and `send_frame_size` values.
  *
  * \param link_type the link type (CTRL, RX, TX) to calculate parameters for
  * \param send_mtu the MTU of link for Tx cases
@@ -230,6 +234,8 @@ inline link_params_t calculate_udp_link_params(
     const size_t constrained_recv_mtu =
         std::min(recv_mtu, device_args.cast<size_t>("mtu", recv_mtu));
 
+    // link_params is the return value. First, we merge device_args and
+    // default_link_params.
     link_params_t link_params;
     link_params.num_send_frames =
         device_args.cast<size_t>("num_send_frames", default_link_params.num_send_frames);
@@ -244,7 +250,8 @@ inline link_params_t calculate_udp_link_params(
     link_params.recv_buff_size =
         device_args.cast<size_t>("recv_buff_size", default_link_params.recv_buff_size);
 
-    // Now apply stream-level overrides based on the link type.
+    // Now apply stream-level overrides based on the link type. Here, we consider
+    // the values in link_args.
     if (link_type == link_type_t::CTRL) {
         // Control links typically do not allow the number of frames to be
         // configured.
@@ -255,22 +262,25 @@ inline link_params_t calculate_udp_link_params(
                 link_params.num_recv_frames);
     } else if (link_type == link_type_t::TX_DATA) {
         // Note that the send frame size will be capped to the Tx MTU.
-        link_params.send_frame_size = link_args.cast<size_t>("send_frame_size",
-            std::min(link_params.send_frame_size, constrained_send_mtu));
+        link_params.send_frame_size = std::min(
+            link_args.cast<size_t>("send_frame_size", link_params.send_frame_size),
+            constrained_send_mtu);
         link_params.num_send_frames =
             link_args.cast<size_t>("num_send_frames", link_params.num_send_frames);
         link_params.send_buff_size =
             link_args.cast<size_t>("send_buff_size", link_params.send_buff_size);
     } else if (link_type == link_type_t::RX_DATA) {
         // Note that the receive frame size will be capped to the Rx MTU.
-        link_params.recv_frame_size = link_args.cast<size_t>("recv_frame_size",
-            std::min(link_params.recv_frame_size, constrained_recv_mtu));
+        link_params.recv_frame_size = std::min(
+            link_args.cast<size_t>("recv_frame_size", link_params.recv_frame_size),
+            constrained_recv_mtu);
         link_params.num_recv_frames =
             link_args.cast<size_t>("num_recv_frames", link_params.num_recv_frames);
         link_params.recv_buff_size =
             link_args.cast<size_t>("recv_buff_size", link_params.recv_buff_size);
     }
 
+    // Finally, we apply any other constraints based on the platform.
 #if defined(UHD_PLATFORM_MACOS) || defined(UHD_PLATFORM_BSD)
     // limit buffer size on OSX to avoid the warning issued by
     // resize_buff_helper

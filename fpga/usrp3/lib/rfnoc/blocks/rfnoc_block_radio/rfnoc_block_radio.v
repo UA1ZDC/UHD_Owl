@@ -14,7 +14,12 @@
 //   NIPC             : Number of radio samples per radio clock cycle
 //   ITEM_W           : Radio sample width
 //   NUM_PORTS        : Number of radio channels (RX/TX pairs)
-//   MTU              : Maximum transmission unit (i.e., maximum packet size) 
+//   EN_COMP_GAIN_TX  : Enable complex gain feature for TX path
+//   EN_COMP_GAIN_RX  : Enable complex gain feature for RX path
+//   EN_FIFO_OUT_REG  : Enable output register on shift register based FIFOs
+//                      to enable higher clock frequencies. Requires more
+//                      resources.
+//   MTU              : Maximum transmission unit (i.e., maximum packet size)
 //                      in CHDR words is 2**MTU.
 //   PERIPH_BASE_ADDR : CTRL port peripheral window base address
 //   PERIPH_ADDR_W    : CTRL port peripheral address space = 2**PERIPH_ADDR_W
@@ -27,6 +32,9 @@ module rfnoc_block_radio #(
   parameter NIPC                  = 1,
   parameter ITEM_W                = 32,
   parameter NUM_PORTS             = 2,
+  parameter EN_COMP_GAIN_TX       = 0,
+  parameter EN_COMP_GAIN_RX       = 0,
+  parameter EN_FIFO_OUT_REG       = 0,
   parameter MTU                   = 10,
   parameter PERIPH_BASE_ADDR      = 20'h80000,
   parameter PERIPH_ADDR_W         = 19,
@@ -108,7 +116,11 @@ module rfnoc_block_radio #(
   // Radio Tx interface
   output wire [(ITEM_W*NIPC)*NUM_PORTS-1:0] radio_tx_data,
   input  wire [              NUM_PORTS-1:0] radio_tx_stb,
-  output wire [              NUM_PORTS-1:0] radio_tx_running
+  output wire [              NUM_PORTS-1:0] radio_tx_running,
+
+  // Radio states
+  output wire [              NUM_PORTS-1:0] radio_state_rx_running,
+  output wire [              NUM_PORTS-1:0] radio_state_tx_running
 );
 
   `include "rfnoc_block_radio_regs.vh"
@@ -252,9 +264,9 @@ module rfnoc_block_radio #(
   // Decode Control Port Addresses
   //---------------------------------------------------------------------------
   //
-  // This block splits the NoC shell's single master control port interface 
-  // into three masters, connected to the shared registers, radio cores, and 
-  // the external CTRL port peripheral interface. The responses from each of 
+  // This block splits the NoC shell's single master control port interface
+  // into three masters, connected to the shared registers, radio cores, and
+  // the external CTRL port peripheral interface. The responses from each of
   // these are merged into a single response and sent back to the NoC shell.
   //
   //---------------------------------------------------------------------------
@@ -277,6 +289,7 @@ module rfnoc_block_radio #(
   wire        ctrlport_core_req_has_time;
   wire [63:0] ctrlport_core_req_time;
   wire        ctrlport_core_resp_ack;
+  wire [ 1:0] ctrlport_core_resp_status;
   wire [31:0] ctrlport_core_resp_data;
 
   ctrlport_decoder_param #(
@@ -321,7 +334,7 @@ module rfnoc_block_radio #(
                                ctrlport_core_resp_ack,
                                ctrlport_shared_resp_ack}),
     .m_ctrlport_resp_status  ({m_ctrlport_resp_status,
-                              2'b00,
+                              ctrlport_core_resp_status,
                               2'b00}),
     .m_ctrlport_resp_data    ({m_ctrlport_resp_data,
                                ctrlport_core_resp_data,
@@ -338,7 +351,10 @@ module rfnoc_block_radio #(
   wire [   NUM_PORTS-1:0] ctrlport_radios_req_rd;
   wire [20*NUM_PORTS-1:0] ctrlport_radios_req_addr;
   wire [32*NUM_PORTS-1:0] ctrlport_radios_req_data;
+  wire [   NUM_PORTS-1:0] ctrlport_radios_req_has_time;
+  wire [64*NUM_PORTS-1:0] ctrlport_radios_req_time;
   wire [   NUM_PORTS-1:0] ctrlport_radios_resp_ack;
+  wire [ 2*NUM_PORTS-1:0] ctrlport_radios_resp_status;
   wire [32*NUM_PORTS-1:0] ctrlport_radios_resp_data;
 
   ctrlport_decoder #(
@@ -352,21 +368,21 @@ module rfnoc_block_radio #(
     .s_ctrlport_req_rd       (ctrlport_core_req_rd),
     .s_ctrlport_req_addr     (ctrlport_core_req_addr),
     .s_ctrlport_req_data     (ctrlport_core_req_data),
-    .s_ctrlport_req_byte_en  (4'b0),
-    .s_ctrlport_req_has_time (1'b0),
-    .s_ctrlport_req_time     (64'b0),
+    .s_ctrlport_req_byte_en  (4'hF),
+    .s_ctrlport_req_has_time (ctrlport_core_req_has_time),
+    .s_ctrlport_req_time     (ctrlport_core_req_time),
     .s_ctrlport_resp_ack     (ctrlport_core_resp_ack),
-    .s_ctrlport_resp_status  (),
+    .s_ctrlport_resp_status  (ctrlport_core_resp_status),
     .s_ctrlport_resp_data    (ctrlport_core_resp_data),
     .m_ctrlport_req_wr       (ctrlport_radios_req_wr),
     .m_ctrlport_req_rd       (ctrlport_radios_req_rd),
     .m_ctrlport_req_addr     (ctrlport_radios_req_addr),
     .m_ctrlport_req_data     (ctrlport_radios_req_data),
     .m_ctrlport_req_byte_en  (),
-    .m_ctrlport_req_has_time (),
-    .m_ctrlport_req_time     (),
+    .m_ctrlport_req_has_time (ctrlport_radios_req_has_time),
+    .m_ctrlport_req_time     (ctrlport_radios_req_time),
     .m_ctrlport_resp_ack     (ctrlport_radios_resp_ack),
-    .m_ctrlport_resp_status  ({NUM_PORTS{2'b00}}),
+    .m_ctrlport_resp_status  (ctrlport_radios_resp_status),
     .m_ctrlport_resp_data    (ctrlport_radios_resp_data)
   );
 
@@ -375,7 +391,7 @@ module rfnoc_block_radio #(
   // Merge Control Port Interfaces
   //---------------------------------------------------------------------------
   //
-  // This block merges the master control port interfaces of all radio_cores 
+  // This block merges the master control port interfaces of all radio_cores
   // into a single master for the NoC shell.
   //
   //---------------------------------------------------------------------------
@@ -481,8 +497,8 @@ module rfnoc_block_radio #(
   //
   //---------------------------------------------------------------------------
 
-  localparam [15:0] compat_major = 16'd0;
-  localparam [15:0] compat_minor = 16'd1;
+  localparam [15:0] compat_major = 16'd1;
+  localparam [15:0] compat_minor = 16'd0;
 
   reg [31:0] radio_time_hi;
 
@@ -531,8 +547,11 @@ module rfnoc_block_radio #(
 
       // The radio core contains all the logic related to a single radio channel.
       radio_core #(
-        .SAMP_W (ITEM_W),
-        .NSPC   (NIPC)
+        .SAMP_W          (ITEM_W),
+        .NSPC            (NIPC),
+        .EN_COMP_GAIN_TX (EN_COMP_GAIN_TX),
+        .EN_COMP_GAIN_RX (EN_COMP_GAIN_RX),
+        .EN_FIFO_OUT_REG (EN_FIFO_OUT_REG)
       ) radio_core_i (
         .radio_clk                 (radio_clk),
         .radio_rst                 (radio_rst),
@@ -542,7 +561,10 @@ module rfnoc_block_radio #(
         .s_ctrlport_req_rd         (ctrlport_radios_req_rd[i]),
         .s_ctrlport_req_addr       (ctrlport_radios_req_addr[i*20 +: 20]),
         .s_ctrlport_req_data       (ctrlport_radios_req_data[i*32 +: 32]),
+        .s_ctrlport_req_has_time   (ctrlport_radios_req_has_time[i]),
+        .s_ctrlport_req_time       (ctrlport_radios_req_time[i*64 +: 64]),
         .s_ctrlport_resp_ack       (ctrlport_radios_resp_ack[i]),
+        .s_ctrlport_resp_status    (ctrlport_radios_resp_status[i*2 +: 2]),
         .s_ctrlport_resp_data      (ctrlport_radios_resp_data[i*32 +: 32]),
 
         // Master Control Port (Error Reporting)
@@ -587,4 +609,33 @@ module rfnoc_block_radio #(
       );
     end
   endgenerate
+
+  assign radio_state_rx_running = radio_rx_running;
+  assign radio_state_tx_running = radio_tx_running;
+
 endmodule
+
+//XmlParse xml_on
+//
+//<regmap name="RFNOC_RADIO_REGMAP" readablestrobes="false" generatevhdl="false" generateverilog="false">
+//  <group name="RFNOC_RADIO_WINDOWS">
+//    <info>
+//      RFNoC control requests are distributed across the following windows.
+//      The shared and periphial windows are capable of handling timed requests.
+//    </info>
+//    <window name="SHARED_WINDOW" offset="0x00000" size="0x010">
+//      <info>Provides read access to the timestamp of the radio block.</info>
+//    </window>
+//    <window name="RFDC_TIMING_WINDOW" offset="0x1000" size="0x0200">
+//      <info>
+//        Provides access to the respective radio cores. Actual size depends on the number of radio
+//        cores.
+//      </info>
+//    </window>
+//    <window name="PERIPH_WINDOW" offset="0x80000" size="0x80000" targetregmap="RADIO_CTRLPORT_REGMAP">
+//      <info>Accessing the peripherals of the radio.</info>
+//    </window>
+//  </group>
+//</regmap>
+//
+//XmlParse xml_off

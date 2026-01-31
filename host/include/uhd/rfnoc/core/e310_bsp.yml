@@ -1,6 +1,18 @@
 type: e31x
 type_id: E310
 family: 7SERIES
+
+parameters:
+  RADIO_NIPC: 1
+  FP_GPIO_BANK_WIDTH: 6
+
+checks:
+  - condition: ${ parameters['RADIO_NIPC'] == 1 }
+    message: |
+      The RADIO_NIPC value is not valid. The default values of RADIO_NIPC will
+      be correct, so please remove the RADIO_NIPC parameter from the image core file.
+    severity: error
+
 transports:
   - name: dma
     type: dma
@@ -20,6 +32,9 @@ io_ports:
   time:
     type: timekeeper
     drive: broadcaster
+  pps:
+    type: pps
+    drive: broadcaster
   radio:
     type: radio
     drive: master
@@ -29,3 +44,12 @@ io_ports:
   dram:
     type: axi4_mm
     drive: slave
+  int_gpio:
+    type: gpio
+    drive: slave
+    parameters:
+      width: ${ config.device.parameters['FP_GPIO_BANK_WIDTH'] }
+    rename:
+      pattern: (.*)
+      repl: int_\1
+    required: recommended

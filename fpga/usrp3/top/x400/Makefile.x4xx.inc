@@ -55,7 +55,7 @@ endif
 # Sources
 ##################################################
 TOP_SRCS = \
-x4xx.v \
+x4xx.sv \
 x4xx_core.v \
 x4xx_core_common.v \
 x4xx_global_regs.v \
@@ -68,7 +68,7 @@ ctrlport_spi_master.v \
 cpld_interface.v \
 cpld_interface_regs.v \
 qsfp_led_controller.v \
-rfdc_timing_control.v \
+rfdc_timing_control.sv \
 x4xx_pps_sync.v \
 ../../lib/timing/pps_generator.v \
 dboards/ctrlport_byte_serializer.v \
@@ -90,7 +90,8 @@ endif
 ifdef X440
 TOP_SRCS += \
 rf/100m/rf_core_100m.v \
-rf/full/rf_core_full.v \
+rf/full/rf_core_full.sv \
+rf/common/adc_iq_repacker.v \
 rf/x440/x440_rf_reset_controller.vhd \
 dboards/fbx/db_gpio_interface.v \
 dboards/fbx/ctrlport_to_i2c_sync_ctrl.v \
@@ -105,13 +106,13 @@ constraints/timing/x410_clocks.xdc
 endif
 
 ifdef X440
-ifeq ($(RF_BW), 400)
+ifneq (,$(findstring RF_BW=400,$(RFNOC_IMAGE_CORE_DEFS)))
 MB_XDC += \
 constraints/timing/x440_clocks_400.xdc
 endif
-ifeq ($(RF_BW), 1600)
+ifneq (,$(findstring RF_BW=200,$(RFNOC_IMAGE_CORE_DEFS)))
 MB_XDC += \
-constraints/timing/x440_clocks_1600.xdc
+constraints/timing/x440_clocks_200.xdc
 endif
 MB_XDC += \
 constraints/timing/x440_clocks.xdc
@@ -142,22 +143,20 @@ MB_XDC += $(RFNOC_XDC_SRCS)
 
 DESIGN_SRCS = $(abspath $(MB_XDC))
 
-# The XDC files must be read in a specific order, motherboard first and then daughterboard.
-# Outside of that, all the other sources can be read in any order desired.
 DESIGN_SRCS += $(abspath \
-$(AXI4_SV_SRCS) $(AXI4S_SV_SRCS) $(AXI4LITE_SV_SRCS) $(TOP_SRCS) \
+$(AXI4_SV_SRCS) $(AXI4S_SV_SRCS) $(AXI4LITE_SV_SRCS) \
 $(AXI_SRCS) $(FIFO_SRCS) \
 $(CONTROL_LIB_SRCS) $(SDR_LIB_SRCS) $(SERDES_SRCS) \
 $(SIMPLE_GEMAC_SRCS) $(TIMING_SRCS) $(COREGEN_DSP_SRCS) \
 $(VRT_SRCS) $(UDP_SRCS) $(COREGEN_SRCS) $(EXTRAM_SRCS) $(WISHBONE_SRCS) \
 $(XGE_SRCS) $(XGE_INTERFACE_SRCS) $(AURORA_PHY_SRCS) \
 $(XGE_PCS_PMA_SRCS) \
-$(PACKET_PROC_SRCS) $(VITA_SRCS) $(DSP_SRCS) $(DRAM_SRCS) \
+$(RFNOC_FRAMEWORK_SRCS) $(PACKET_PROC_SRCS) $(VITA_SRCS) $(DSP_SRCS) $(DRAM_SRCS) \
 $(RADIO_SRCS) $(CAP_GEN_GENERIC_SRCS) $(IP_XCI_SRCS) $(BD_SRCS) \
-$(RFNOC_SRCS) $(RFNOC_OOT_SRCS) $(LIB_IP_XCI_SRCS) $(LIB_HLS_IP_SRCS) $(LIBCOREGEN_SRCS) \
-$(DB_COMMON_SRCS) $(RFNOC_FRAMEWORK_SRCS) \
-$(WB_SPI_SRCS) $(RFNOC_XPORT_SV_SRCS) \
-$(RFNOC_IMAGE_CORE_SRCS) \
+$(LIB_IP_XCI_SRCS) $(LIB_HLS_IP_SRCS) $(LIBCOREGEN_SRCS) $(WB_SPI_SRCS) \
+$(RFNOC_SRCS) $(RFNOC_OOT_SRCS) \
+$(RFNOC_XPORT_SV_SRCS) $(RFNOC_IMAGE_CORE_SRCS) \
+$(DB_COMMON_SRCS) $(TOP_SRCS) \
 )
 
 # Pass the image core header files required by RFNoC

@@ -91,7 +91,6 @@ noc_blocks:
     block_desc: 'radio.yml'
     parameters:
       NUM_PORTS: 2
-      NIPC: RADIO_NIPC
   duc1:
     block_desc: 'duc.yml'
     parameters:
@@ -104,7 +103,6 @@ noc_blocks:
     block_desc: 'radio.yml'
     parameters:
       NUM_PORTS: 2
-      NIPC: RADIO_NIPC
   replay0:
     block_desc: 'replay.yml'
     parameters:
@@ -158,6 +156,8 @@ connections:
   #
   # BSP Connections
   - { srcblk: replay0, srcport: axi_ram, dstblk: _device_, dstport: dram0 }
+  - { srcblk: _device_, srcport: _none_, dstblk: _device_, dstport: gpio0 }
+  - { srcblk: _device_, srcport: _none_, dstblk: _device_, dstport: gpio1 }
   # Other BSP connections are inherited from YAML include files
 
 # A list of all clock domain connections in design

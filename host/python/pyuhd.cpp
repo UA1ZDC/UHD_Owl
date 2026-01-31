@@ -16,8 +16,10 @@ namespace py = pybind11;
 
 #include "cal/cal_python.hpp"
 #include "device_python.hpp"
+#include "include/uhdlib/usrp/common/max287x_python.hpp"
 #include "property_tree_python.hpp"
 #include "rfnoc/ddc_block_control_python.hpp"
+#include "rfnoc/dram/dram_helper_python.hpp"
 #include "rfnoc/duc_block_control_python.hpp"
 #include "rfnoc/fft_block_control_python.hpp"
 #include "rfnoc/fir_filter_block_control_python.hpp"
@@ -45,6 +47,7 @@ namespace py = pybind11;
 #include "usrp/fe_connection_python.hpp"
 #include "usrp/multi_usrp_python.hpp"
 #include "usrp/subdev_spec_python.hpp"
+#include "usrp_clock/multi_usrp_clock_python.hpp"
 #include "utils/paths_python.hpp"
 #include "utils/utils_python.hpp"
 #include "version_python.hpp"
@@ -92,6 +95,14 @@ PYBIND11_MODULE(libpyuhd, m)
     export_dboard_iface(usrp_module);
     export_fe_connection(usrp_module);
     export_stream(usrp_module);
+    auto chips_submodule = usrp_module.def_submodule("chips", "Chips");
+    auto max287x_submodule =
+        chips_submodule.def_submodule("max287x", "MAX287x Interface");
+    export_max287x_iface(max287x_submodule);
+
+    // Register usrp clock submodule
+    auto usrp_clock_module = m.def_submodule("usrp_clock", "USRP Clock Objects");
+    export_multi_usrp_clock(usrp_clock_module);
 
     // Register filters submodule
     auto filters_module = m.def_submodule("filters", "Filter Submodule");
@@ -115,6 +126,9 @@ PYBIND11_MODULE(libpyuhd, m)
     export_switchboard_block_control(rfnoc_module);
     export_vector_iir_block_control(rfnoc_module);
     export_window_block_control(rfnoc_module);
+
+    auto dram_module = rfnoc_module.def_submodule("dram", "DRAM helpers");
+    export_dram_helper(dram_module);
 
     // Register calibration submodule
     auto cal_module = m.def_submodule("cal", "Calibration Objects");

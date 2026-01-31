@@ -5,13 +5,14 @@
 //
 
 #include <uhd/rfnoc/defaults.hpp>
-#include <uhdlib/rfnoc/node_accessor.hpp>
+#include <uhd/rfnoc/node_accessor.hpp>
 #include <uhdlib/rfnoc/rfnoc_rx_streamer.hpp>
 #include <atomic>
+#include <chrono>
+#include <numeric>
 #include <thread>
 
 using namespace std::chrono_literals;
-;
 using namespace uhd;
 using namespace uhd::rfnoc;
 
@@ -51,6 +52,16 @@ rfnoc_rx_streamer::rfnoc_rx_streamer(const size_t num_chans,
                 return;
             }
             _handle_stream_cmd_action(src, stream_cmd_action);
+        });
+    register_action_handler(ACTION_KEY_TUNE_REQUEST,
+        [this](const res_source_info& src, action_info::sptr action) {
+            tune_request_action_info::sptr tune_request_action =
+                std::dynamic_pointer_cast<tune_request_action_info>(action);
+            if (!tune_request_action) {
+                RFNOC_LOG_WARNING("Received invalid tune request action!");
+                return;
+            }
+            RFNOC_LOG_DEBUG("Received tune request on " << src.to_string());
         });
 
     // Initialize properties
@@ -138,6 +149,16 @@ void rfnoc_rx_streamer::issue_stream_cmd(const stream_cmd_t& stream_cmd)
     }
 }
 
+void rfnoc_rx_streamer::post_input_action(
+    const std::shared_ptr<uhd::rfnoc::action_info>& action, const size_t port)
+{
+    if (port > get_num_channels()) {
+        throw uhd::runtime_error("Invalid channel. Please provide a valid channel");
+    }
+    const uhd::rfnoc::res_source_info info(res_source_info::INPUT_EDGE, port);
+    post_action(info, action);
+}
+
 const uhd::stream_args_t& rfnoc_rx_streamer::get_stream_args() const
 {
     return _stream_args;
@@ -160,7 +181,8 @@ void rfnoc_rx_streamer::_handle_overrun()
     if (_overrun_handling_mode && !_last_stream_cmd_stop) {
         RFNOC_LOG_TRACE("Requesting restart from overrun-reporting node...");
         post_action({res_source_info::INPUT_EDGE, _overrun_channel},
-            action_info::make(ACTION_KEY_RX_RESTART_REQ));
+            action_info::make(ACTION_KEY_RX_RESTART_REQ),
+            action_mode_t::ASYNC);
     }
 }
 
@@ -168,16 +190,27 @@ void rfnoc_rx_streamer::connect_channel(
     const size_t channel, chdr_rx_data_xport::uptr xport)
 {
     UHD_ASSERT_THROW(channel < _mtu_in.size());
-
     // Stash away the MTU before we lose access to xports
-    const size_t mtu = xport->get_mtu();
+    const size_t xport_mtu = xport->get_mtu();
 
     rx_streamer_impl<chdr_rx_data_xport>::connect_channel(channel, std::move(xport));
 
-    // Update MTU property based on xport limits. We need to do this after
-    // connect_channel(), because that's where the chdr_rx_data_xport object
-    // learns its header size.
-    set_property<size_t>(PROP_KEY_MTU, mtu, {res_source_info::INPUT_EDGE, channel});
+    // Update MTU property. We need to do this after connect_channel(), because
+    // that's where the chdr_rx_data_xport object learns its header size.
+    // Note that rx_streamer_impl has the option to override the MTU value based
+    // on stream args. We therefore see what the rx_streamer_impl is using as
+    // an MTU value, and compare it with the xport MTU so we can log a warning.
+    // Logging a warning in rx_streamer_impl is less useful, because we can't
+    // use a Noc-ID there.
+    if (xport_mtu < rx_streamer_impl::get_mtu()) {
+        RFNOC_LOG_WARNING("Using MTU value "
+                          << rx_streamer_impl::get_mtu()
+                          << " bytes, but transport reports an MTU of " << xport_mtu
+                          << " bytes. This may cause packet fragmentation!");
+    }
+    set_property<size_t>(PROP_KEY_MTU,
+        rx_streamer_impl::get_mtu(),
+        {res_source_info::INPUT_EDGE, channel});
 }
 
 void rfnoc_rx_streamer::_register_props(const size_t chan, const std::string& otw_format)
@@ -191,8 +224,8 @@ void rfnoc_rx_streamer::_register_props(const size_t chan, const std::string& ot
         property_t<double>(PROP_KEY_TICK_RATE, {res_source_info::INPUT_EDGE, chan}));
     _type_in.emplace_back(property_t<std::string>(
         PROP_KEY_TYPE, otw_format, {res_source_info::INPUT_EDGE, chan}));
-    _mtu_in.emplace_back(
-        property_t<size_t>(PROP_KEY_MTU, get_mtu(), {res_source_info::INPUT_EDGE, chan}));
+    _mtu_in.emplace_back(property_t<size_t>(
+        PROP_KEY_MTU, rx_streamer_impl::get_mtu(), {res_source_info::INPUT_EDGE, chan}));
     _atomic_item_size_in.emplace_back(property_t<size_t>(
         PROP_KEY_ATOMIC_ITEM_SIZE, 1, {res_source_info::INPUT_EDGE, chan}));
 
@@ -239,22 +272,24 @@ void rfnoc_rx_streamer::_register_props(const size_t chan, const std::string& ot
                 this->set_tick_rate(tick_rate_in.get());
             }
         });
-
-    add_property_resolver(
-        {atomic_item_size_in, mtu_in}, {}, [&ais = *atomic_item_size_in, chan, this]() {
+    add_property_resolver({atomic_item_size_in, mtu_in, type_in},
+        {},
+        [&ais = *atomic_item_size_in, &type = *type_in, chan, this]() {
             const auto UHD_UNUSED(log_chan) = chan;
             RFNOC_LOG_TRACE("Calling resolver for `atomic_item_size'@" << chan);
             if (ais.is_valid()) {
-                const auto spp = this->rx_streamer_impl::get_max_num_samps();
-                if (spp < ais.get()) {
+                const size_t bpi          = convert::get_bytes_per_item(type.get());
+                const size_t spp          = this->rx_streamer_impl::get_max_num_samps();
+                const size_t spp_multiple = std::lcm<size_t>(ais.get(), bpi) / bpi;
+                if (spp < spp_multiple) {
+                    RFNOC_LOG_ERROR("Cannot resolve spp! Must be a multiple of "
+                                    << spp_multiple << " but max value is " << spp);
                     throw uhd::value_error(
-                        "samples per package must not be smaller than atomic item size");
+                        "Samples per packet is incompatible with atomic item size!");
                 }
-                const auto misalignment = spp % ais.get();
-                RFNOC_LOG_TRACE(
-                    "Check atomic item size " << ais.get() << " divides spp " << spp);
+                const auto misalignment = spp % spp_multiple;
                 if (misalignment > 0) {
-                    RFNOC_LOG_TRACE("Reduce spp by "
+                    RFNOC_LOG_TRACE("Reducing spp by "
                                     << misalignment << " to align with atomic item size");
                     this->rx_streamer_impl::set_max_num_samps(spp - misalignment);
                 }
@@ -280,7 +315,8 @@ void rfnoc_rx_streamer::_handle_rx_event_action(
         // Reminder: Delivery of all of these actions is deferred until this
         // action handler is complete.
         for (size_t i = 0; i < get_num_input_ports(); ++i) {
-            post_action({res_source_info::INPUT_EDGE, i}, stop_action);
+            post_action(
+                {res_source_info::INPUT_EDGE, i}, stop_action, action_mode_t::ASYNC);
         }
         if (!rx_event_action->args.cast<bool>("cont_mode", false)
             || _last_stream_cmd_stop) {
@@ -302,13 +338,13 @@ void rfnoc_rx_streamer::_handle_rx_event_action(
 void rfnoc_rx_streamer::_handle_stream_cmd_action(
     const res_source_info& src, stream_cmd_action_info::sptr stream_cmd_action)
 {
-    RFNOC_LOG_TRACE("Received stream command on " << src.to_string());
+    RFNOC_LOG_DEBUG("Received stream command on " << src.to_string());
     UHD_ASSERT_THROW(src.type == res_source_info::INPUT_EDGE);
     auto start_action =
         stream_cmd_action_info::make(stream_cmd_action->stream_cmd.stream_mode);
     start_action->stream_cmd = stream_cmd_action->stream_cmd;
     for (size_t i = 0; i < get_num_input_ports(); ++i) {
-        post_action({res_source_info::INPUT_EDGE, i}, start_action);
+        post_action({res_source_info::INPUT_EDGE, i}, start_action, action_mode_t::ASYNC);
     }
     if (_overrun_handling_mode.exchange(false)) {
         RFNOC_LOG_TRACE("Leaving overrun handling mode.");

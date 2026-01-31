@@ -56,7 +56,7 @@ crossbar_routes:
   - [ 1, 1, 1, 1, 1, 0, 0, 1, 1 ] # ep0  (radio0.0)
   - [ 1, 1, 1, 1, 1, 0, 0, 1, 1 ] # ep1  (radio1.0)
   - [ 1, 1, 1, 1, 1, 1, 1, 0, 0 ] # ep2  (replay0.0)
-  - [ 1, 1, 1, 1, 1, 1, 1, 0, 0 ] # ep3  (replay0.1)
+  - [ 1, 1, 1, 1, 1, 1, 1, 0, 0 ] # ep3  (replay1.0)
 
 # A list of all NoC blocks in design
 # ----------------------------------
@@ -65,12 +65,10 @@ noc_blocks:
     block_desc: 'radio.yml'
     parameters:
       NUM_PORTS: 1
-      NIPC: RADIO_NIPC
   radio1:
     block_desc: 'radio.yml'
     parameters:
       NUM_PORTS: 1
-      NIPC: RADIO_NIPC
   replay0:
     block_desc: 'replay.yml'
     parameters:
@@ -112,6 +110,8 @@ connections:
   # BSP Connections
   - { srcblk: replay0,  srcport: axi_ram,  dstblk: _device_, dstport: dram0 }
   - { srcblk: replay1,  srcport: axi_ram,  dstblk: _device_, dstport: dram1 }
+  - { srcblk: _device_, srcport: _none_, dstblk: _device_, dstport: gpio0 }
+  - { srcblk: _device_, srcport: _none_, dstblk: _device_, dstport: gpio1 }
   # Other BSP connections are inherited from YAML include files
 
 # A list of all clock domain connections in design

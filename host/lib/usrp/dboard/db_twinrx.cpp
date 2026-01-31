@@ -18,8 +18,6 @@
 #include <uhd/usrp/dboard_manager.hpp>
 #include <uhd/utils/log.hpp>
 #include <uhd/utils/static.hpp>
-#include <boost/thread.hpp>
-#include <boost/thread/mutex.hpp>
 #include <memory>
 //#include <fstream>    //Needed for _expert->to_dot() below
 
@@ -56,10 +54,18 @@ public:
             ->create<std::string>("connection")
             .set(_ch_name == "0" ? "II" : "QQ"); // Ch->ADC port mapping
         static const double BW = 80e6;
-        get_rx_subtree()->create<double>("bandwidth/value").set(BW);
         get_rx_subtree()
             ->create<meta_range_t>("bandwidth/range")
             .set(freq_range_t(BW, BW));
+        get_rx_subtree()
+            ->create<double>("bandwidth/value")
+            .set_coercer([this](const double bandwidth) {
+                return get_rx_subtree()
+                    ->access<meta_range_t>("bandwidth/range")
+                    .get()
+                    .clip(bandwidth);
+            })
+            .set(BW);
 
         // Command Time
         expert_factory::add_data_node<time_spec_t>(

@@ -1,3 +1,177 @@
+uhd (4.9.0.0-0ubuntu1) ubuntu_release; urgency=low
+
+  * Highlights / Main Changes
+    - Support for USRP B206mini-i
+    - Support for OBX daughterboard
+  * New Features
+    - OBX daughterboard and B206mini support added.
+    - X3x0: Add support for the gps_iface feature. This allows sending arbitrary
+      commands to the GPS module.
+    - rfnoc_modtool: Add a new subcommand, `make-yaml`, that generates a block
+      YAML file from some user inputs. When calling `rfnoc_modtool add`  without
+      a valid block YAML file, the tool will now automatically call `make-yaml` to
+      generate a new YAML file.
+    - Added support for processing multiple samples per cycle in FFT block.
+    - LabVIEW/USRP: New repository containing example applications which 
+      demonstrate how to use NI LabVIEW with USRP devices via the UHD APIs.
+      (https://github.com/ni/labview-usrp-examples)
+    - Improved RFNoC OOT Block support:
+      New repository containing official RFNoC OOT Blocks
+      (https://github.com/EttusResearch/rfnoc-oot-blocks)
+      - Added new RFNoC Aurora Block for TX and RX remote streaming applications
+        to and from Aurora capable compute nodes like FPGA Coprocessors.
+    - Enhanced the UHD Windows installer to automatically install Windows
+      driver packages into the OS, eliminating this manual post-installation
+      step for B-Series USB devices. 
+  * API Changes
+    - `uhd::math::gcd` and `uhd::math::lcm` are removed from the public
+       headers. Use `std::gcd` and `std::lcm` instead if C++17 is available,
+       or `boost::math::gcd` and `boost::math::lcm` if not.
+    - When calling `recv()` on an RX streamer connected to an RFNoC device, we
+      no longer artificially inflate the timeout value. The old behaviour was
+      in some cases abused to detect overruns, but this is not a reliable method
+      and is now explicitly declared unsupported.
+  * Bug Fixes
+    - RFNoC
+      - Calling `recv()` on an RX streamer connected to an RFNoC device with a
+        zero timeout value now correctly returns immediately.
+      - rfnoc-gain: Moved the fpga/ subdirectory under rfnoc/. This way, the
+        directory structure inside the OOT module is identical to the directory
+        structure after installation.
+    - X410:
+      - Fixed NCO reset mechanism that caused ADC self-cal errors to occur during
+        reopening of a UHD session when timed tune commands were previously used.
+  * Removals / Deprecations
+    - Removed tools/uhd_dump. This tool is obsolete, the USRP X3x0 is not even
+      compatible with it any more. Dumps can be recorded and analyzed with wireshark
+      and the UHD dissectors in here.
+    - Removed network_relay example.
+  * Validated OS Environments
+    (Versions for build and runtime dependencies can be determined from the
+     docker container definitions in the UHD repository at .ci/docker/...)
+    - Linux:
+      - Ubuntu: focal (20.04), jammy (22.04), noble (24.04), plucky (25.04)
+      - Fedora: 40, 41, 42
+    - Windows: 10 22H2, 11 23H2
+    - MacOS: Sequoia (15.2)
+
+ -- Ettus Research <uhd.maintainer@emerson.com>  Fri, 22 Aug 2025 06:07:44 -0800
+
+
+uhd (4.8.0.0-0ubuntu1) ubuntu_release; urgency=low
+
+  * Highlights / Main Changes
+    - Addition of rfnoc_modtool and further improvements to RFNoC Image Builder
+      toolsets. This further improves the ability to design RFNoC blocks and
+      create custom FPGA bitfiles.
+    - Replaced RFNoC FFT block with a new version
+    - Improved Windows installation capabilities including distribution
+      of binary Python bindings for Windows though PyPI
+  * New Features
+    - Image Builder
+      - Add GRC support. This allows designing RFNoC bitfiles from GNU Radio
+        Companion (GRC).
+      - Improve clock connection checks and checks for duplicate connections.
+      - Improve IO port compat check (e.g., check if wire widths match).
+      - Allow default clocks in domain checks.
+      - Simplify image core YAMLs by better usage of RADIO_NIPC parameter.
+      - Improve parameter resolution.
+      - Improve error messages for missing YAML files.
+      - Add --SYNTH and --CHECK options.
+      - Add support for building an FPGA image using multiple parallel jobs and
+        unique seeds with repeat_fpga_build.py and the --fpga-jobs option.
+      - Add 'q' (or 'quote') filter to YAML files to allow quoting strings.
+    - rfnoc-gain (OOT RFNoC example)
+      - Overhaul directory structure, and rename to rfnoc-gain from
+        rfnoc-example.
+      - Simplify dynamic loading of OOT DLLs by using the new modules.d feature.
+      - Add CE clock support to gain block. This enables the example on X4x0.
+      - Add a GNU Radio subdirectory with examples of how to run the gain block
+        in GNU Radio.
+    - Add rfnoc_modtool. This is a command line utility to help design OOT RFNoC
+      blocks and replaces the previously available blocktool.
+    - RFNoC
+      - Add tune requests. This allows tuning a complete graph as known from
+        multi_usrp instead of single blocks individually.
+      - Replace FFT block with a new version supporting larger FFT sizes and
+        cyclic prefix insertion and removal.
+    - multi_usrp
+      - Add Python bindings for get_user_settings_iface()
+    - General UHD
+      - Add modules.d support
+      - Add uhd::find_uhd_command() API call
+      - Remove old-style Boost.Asio usage for compatibility with future versions
+        of Boost.
+    - Embedded Filesystem
+      - Support for USB Audio devices on E31X, E320, N3XX and X4XX
+    - Windows binary installer
+      - Simplified the Windows installer experience by reducing the number of
+        individual downloads from 4 (for USB devices) to 2, by including
+        libusb.dll and USB driver installer files into NSIS-built installer
+        binaries.
+      - Add new cmake feature option called ENABLE_EXTEND_WIN_PACKAGING,
+        which defaults to off. Enabling this feature will cause a number
+        of convenience components to be included into the Windows deployment
+        package (aka. installer).
+        Enabling this feature has no effect on other platforms.
+      - Added binary Python bindings for Windows installable through PyPI
+        (pip install uhd)
+    - Documentation
+      - Add documentation about relationship of MTU, samples per packet and
+        atomic item size
+  * Dependencies changes
+    - Increase minimum required versions
+      - CMake to 3.12
+      - Boost to 1.66
+  * Bug Fixes
+    - General UHD
+      - Fix compatibility with DPDK >= 22.11
+      - Fix compiler warnings for better compatibility with C++17 and 20.
+      - Add logic for loading uhd.dll from the correct path for Windows with
+        Python3.8+.
+      - Add logic to warn about potential incompatibilities when importing
+        Python bindings.
+      - Remove duplicate results from find
+      - Release GIL when calling find from Python which improves response time
+        for large setups.
+    - Python support
+      - On Windows now also enable building python support if minimum supported
+        python version is detected.
+      - Changed version number format for build Windows binaries to common
+        major.api.abi.patch format.
+    - MPM
+      - Allow images without RF frontend (will only be initialized if FPGA
+        reports availability)
+      - Fix usrp_update_fs to work for all embedded devices (and not just X4xx)
+    - E320: Ensure consistent sequencing when powering on/off GPSDO
+    - N310/N300: Fix LO query API for lowband LO
+    - RFNoC
+      - RFNoC DDC/DUC block (used in all Gen-3 USRPs and X410): Fix fractional
+        frequency offset.
+      - Fix AIS/spp calculation (e.g., for connecting FFT blocks).
+      - Fix USE_IMPL rendering for the addsub block.
+    - Image Builder
+      - Fix colors
+      - Fix error message for missing control SEP
+      - Improve error reporting for invalid connections
+      - Accept ~ and ~user on command line
+      - Fix deprecated usage of yaml.load()
+      - Ensure correct device tree files generation when choosing a custom build
+        directory
+    - rfnoc_modtool
+      - Fix generation of noc_shells
+  * Validated OS Environments
+    (Versions for build and runtime dependencies can be determined from the
+     docker container definitions in the UHD repository at .ci/docker/...)
+    - Linux:
+      - Ubuntu: bionic (18.04), focal (20.04), jammy (22.04), noble (24.04)
+      - Fedora: 39, 40, 41
+    - Windows: 10 21H2, 11 21H2
+    - MacOS: Monterey (12.6)
+
+ -- Ettus Research <uhd.maintainer@emerson.com>  Thu, 23 Jan 2025 05:54:22 -0800
+
+
 uhd (4.7.0.0-0ubuntu1) ubuntu_release; urgency=low
 
   * Highlights / Main Changes
@@ -113,133 +287,11 @@ uhd (4.7.0.0-0ubuntu1) ubuntu_release; urgency=low
      docker container definitions in the UHD repository at .ci/docker/...)
     - Linux:
       - Ubuntu: bionic (18.04), focal (20.04), jammy (22.04), noble (24.04)
-      - Fedora: 34, 35, 36
+      - Fedora: 37, 38
     - Windows: 10 21H2, 11 21H2
     - MacOS: Monterey (12.6)
 
- -- Ettus Research <packages@ettus.com>  Fri, 28 Jun 2024 03:18:38 -0800
-
-
-uhd (4.7.0.0-0ubuntu1) ubuntu_release; urgency=low
-
-  * Highlights / Main Changes
-    - Major updates to rfnoc_image_builder (a98ce26). This change adds support for
-      defining transport adapters in the image builder YAML files, adding custom
-      modules, and more.
-    - Updated embedded OS on file system images for E3xx, N3xx, and X4xx devices
-      to Yocto 4.0 (kirkstone).
-  * New Features
-    - General
-      - Allow installing only Python-based utilities (e.g., rfnoc_image_builder)
-        by adding the ENABLE_PYMOD_UTILS option to CMake.
-      - Added ability to query dot representation of RFNoC graph
-    - Python support
-      - Added DRAMReceiver class and amend rx_to_file.py example to use new class.
-        This supplements the DRAMTransmitter class and simplifies using the DRAM-backed
-        RFNoC replay block to when signal bandwidth exceeds available streaming bandwidth.
-    - CMake
-      - We now search for a system version of Pybind11 before falling back to the
-        bundled version. The system version is preferred, and the bundled version
-        may be removed in a future release.
-    - RFNoC
-      - Image builder: Major update, which adds support for defining transport
-        adapters in the image builder YAML files, adding custom modules, choosing
-        custom directories for build, IP, and intermediate files, building IP
-        only, saving Vivado projects, and more. Image core YAML files created with
-        this version are not compatible with previous versions, and vice versa!
-        Also adds many more checks to avoid building bitfiles that are either
-        incomplete, or valid but probably not the desired outcome.
-      - Added support for defining custom register spaces in RFNoC blocks.
-      - Added license checking subsystem. This allows creating RFNoC blocks that
-        require a license key to operate.
-      - Add device DNA feature for X310, X410, X440. This allows reading back the
-        FPGA's DNA, which is a unique identifier.
-    - Embedded OS for E3xx, N3xx, and X4xx devices
-      - With the switch to Yocto 4.0 (kirkstone), the SD card and eMMC images no 
-        longer pre-populate the second system partition. Refer to the device 
-        specific "Updating Filesystems" section in the user manual for how to populate it.
-        This reduces the size of compressed .sdimg filesystem images.
-    - X440
-      - Added new guided log info mode to provide more information about the Nyquist
-        zone in which the chosen frequency is located. These additional info logs
-        are enabled by default. For disabling the guided mode, add the entry
-        `guided_mode=false` to the UHD config file in the "Global" section.
-    - Examples
-      - rfnoc-example now also generates Python bindings for OOT block control functions.
-  * Dependencies changes
-    - Increase minimum required version
-      - Python to 3.7.0
-      - Pybind11 to 2.7.0
-  * Bug Fixes
-    - General UHD
-      - Fix issue with undefined HOME or XDG_CONFIG_HOME
-      - Fix compilation error with boost 1.85.0 (closed issue 740)
-      - Fixed cmake find_library for UHD to fail if the library is not found
-      - Fixed setters for ALL_CHANS in multi_usrp
-      - Demoted safe call logging to warning
-      - Fixed outstanding clang-format issues
-      - Fixed compiling with gcc 13.2
-      - Removed superfluous usage of const in return values
-    - Python support
-      - YAML files are now listed as part of the package
-      - Fix setting start_time having no effect
-    - RFNoC
-      - Add EOB to source port of null_src_sink block
-      - Fix RFNoC graph action queue lockup on action exceptions
-      - FIR filters now uses newer IP revisions
-      - Reverse FIR filter coefficients now get embedded in DSPE48
-    - B2xx
-      - Fixed FRAC2 calculation (closed issue 684).
-      - Fix DC truncation bias by adding rounding to DDC chain
-    - X310
-      - Fix warning about duplicate reg
-      - ubx
-        - update ubx xcvr mode options
-        - write output power to correct LO
-        - Fix width of gain register
-    - MPM
-      - Deactivate explicit DAD (Duplicate Address Detection) on int0 interface
-        since this is the default behavior of systemd v250.5 (Yocto release kirkstone)
-        for static IPv4 addresses if the IP address is a link local address.
-      - Correct outdated mender command in prints of usrp_update_fs utility
-      - No longer import from from rpc_server when already importing usrp_mpm
-      - Demoted log level of ECHO send error
-      - No longer print iptables errors when setting up forwarding
-    - X400 Platform
-      - Add PPS interface to X410/X440 BSP
-      - Add netlist make flow
-      - Update PS DRAM speed bin
-      - Replace Ethernet transport adapter
-    - X410
-      - Set Locale for ZBX Lattice build
-      - Improve Lattice make flow
-    - X440
-      - Fix error in master clock table for 1000MHz mcr.
-      - Place SPI into IOB on X440
-      - mpm
-        - Add error for recurring TA node inst values
-        - Fix warning about different converter rates
-        - Fix MTS skip for dual-rate
-        - Use greatest converter rate for sysref rate
-        - Add warning for bad conv rate order
-        - Enable multiple LMK VCO rates per MCR
-    - Examples
-      - Fix rx_samples_to_file failure for multichannel fullpath.
-      - Fixed bugs observing cmd argument -c in remote_rx.py example.
-      - Updated tx_waveforms examples now also use timed commands during
-        frequency tuning for all devices except for x410.
-        On X440 this allows reproducing specified channel to channel phase alignments.
-      - Consistently comment out sections in rx_samples_to_file.
-  * Validated OS Environments
-    (Versions for build and runtime dependencies can be determined from the
-     docker container definitions in the UHD repository at .ci/docker/...)
-    - Linux:
-      - Ubuntu: bionic (18.04), focal (20.04), jammy (22.04), noble (24.04)
-      - Fedora: 34, 35, 36
-    - Windows: 10 21H2, 11 21H2
-    - MacOS: Monterey (12.6)
-
- -- Ettus Research <packages@ettus.com>  Fri, 28 Jun 2024 02:59:30 -0800
+ -- Ettus Research <packages@ettus.com>  Mon, 01 Jul 2024 12:10:36 -0800
 
 
 uhd (4.6.0.0-0ubuntu1) ubuntu_release; urgency=low

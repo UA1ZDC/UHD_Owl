@@ -236,6 +236,10 @@ pcie_manager::pcie_manager(
     UHD_LOG_INFO(
         "X300", "Connecting to niusrpriorpc at localhost:" << rpc_port_name << "...");
 
+    if (args.enable_force_mtu()) {
+        UHD_LOG_WARNING("X300", "The `force_mtu` argument is not used for PCIe links.");
+    }
+
     // Instantiate the correct lvbitx object
     nifpga_lvbitx::sptr lvbitx;
     switch (get_mb_type_from_pcie(args.get_resource(), rpc_port_name)) {
@@ -353,8 +357,14 @@ both_links_t pcie_manager::get_links(link_type_t link_type,
 
     // PCIe: Lossless, and little endian
     size_t recv_buff_size, send_buff_size;
+    std::function<void(uint32_t)> release_cb = [this](uint32_t channel) {
+        UHD_LOG_DEBUG("X300", "Release channel assignment for DMA " << channel);
+        std::lock_guard<std::mutex> l(_dma_chan_mutex);
+        _dma_chan_pool.erase(channel);
+    };
     auto link = nirio_link::make(_rio_fpga_interface,
         dma_channel_num,
+        std::move(release_cb),
         link_params,
         link_args,
         recv_buff_size,

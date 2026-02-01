@@ -8,6 +8,7 @@
 
 #include <uhd/types/device_addr.hpp>
 #include <uhd/types/time_spec.hpp>
+#include <boost/optional.hpp>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -58,6 +59,9 @@ public:
      *  and it has been validated, the async message callback function is called.
      *  An async message can be modelled as a simple register write (key-value
      *  pair with addr/data) that is initiated by the FPGA.
+     *
+     * Message handlers can trigger actions, but should do so asynchronously to
+     * avoid blocking.
      *
      *  When this message is called, the async message was previously verified
      *  by calling the async message validator callback.

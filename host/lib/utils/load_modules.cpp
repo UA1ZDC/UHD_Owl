@@ -8,13 +8,15 @@
 #include <uhd/exception.hpp>
 #include <uhd/utils/paths.hpp>
 #include <uhd/utils/static.hpp>
-#include <boost/filesystem.hpp>
+#include <uhdlib/utils/paths.hpp>
 #include <boost/format.hpp>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
 
-namespace fs = boost::filesystem;
+namespace fs = std::filesystem;
 
 /***********************************************************************
  * Module Load Function
@@ -85,6 +87,35 @@ static void load_module_path(const fs::path& path)
     }
 }
 
+namespace {
+
+// Load all modules listed in a given directory.
+//
+// This will:
+// - Open each file in the directory
+// - Read each line from the file
+// - Load the module named by each line
+void load_module_d_path(const fs::path& path)
+{
+    for (fs::directory_iterator dir_itr(path); dir_itr != fs::directory_iterator();
+         ++dir_itr) {
+        if (fs::is_regular_file(dir_itr->path())) {
+            // read file into lines
+            std::ifstream file(dir_itr->path().string().c_str());
+            std::string line;
+            while (std::getline(file, line)) {
+                if (line.empty() or line[0] == '#') {
+                    continue;
+                }
+                load_module(line);
+            }
+        }
+    }
+}
+
+} /* anonymous namespace */
+
+
 /*!
  * Load all the modules given in the module paths.
  */
@@ -92,5 +123,10 @@ UHD_STATIC_BLOCK(load_modules)
 {
     for (const fs::path& path : uhd::get_module_paths()) {
         load_module_path(path);
+    }
+    for (const fs::path& path : uhd::get_module_d_paths()) {
+        if (fs::is_directory(path)) {
+            load_module_d_path(path);
+        }
     }
 }

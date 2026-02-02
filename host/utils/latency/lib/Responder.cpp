@@ -9,12 +9,12 @@
 #include <uhd/property_tree.hpp>
 #include <uhd/utils/thread.hpp>
 #include <boost/algorithm/string.hpp>
-#include <boost/filesystem.hpp>
 #include <boost/format.hpp>
 #include <boost/thread/condition_variable.hpp>
 #include <cmath>
 #include <complex>
 #include <csignal>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -65,7 +65,7 @@ void Responder::FLUSH_SCREEN()
 void Responder::FLUSH_SCREEN_NL()
 {
     do {
-        int y, x;
+        int UHD_UNUSED(y), x;
         getyx(_window, y, x);
         if (x > 0) {
             printw("\n");
@@ -449,7 +449,7 @@ bool Responder::set_stats_filename(string test_id)
 bool Responder::check_for_existing_results()
 {
     bool ex = false;
-    if ((_opt.skip_if_results_exist) && (boost::filesystem::exists(_stats_filename))) {
+    if ((_opt.skip_if_results_exist) && (std::filesystem::exists(_stats_filename))) {
         print_msg((boost::format("Skipping invocation as results file already exists: %s")
                    % _stats_filename)
                       .str());

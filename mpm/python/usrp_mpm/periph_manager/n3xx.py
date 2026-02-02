@@ -45,6 +45,7 @@ N3XX_MONITOR_THREAD_INTERVAL = 1.0 # seconds
 N3XX_BUS_CLK = 200e6
 N3XX_GPIO_BANKS = ["FP0",]
 N3XX_GPIO_SRC_PS = "PS"
+N3XX_GPIO_SRC_USER_APP = "USER_APP"
 N3XX_FPGPIO_WIDTH = 12
 
 # Import daughterboard PIDs from their respective classes
@@ -380,8 +381,8 @@ class n3xx(ZynqComponents, PeriphManagerBase):
         # Init FPGA type
         self._update_fpga_type()
         # Init FP-GPIO sources
-        self._fp_gpio_srcs = [N3XX_GPIO_SRC_PS,]
-        if self.device_info['product'] == 'n320':
+        self._fp_gpio_srcs = [N3XX_GPIO_SRC_PS, N3XX_GPIO_SRC_USER_APP]
+        if self.device_info["product"] == "n320":
             for chan_idx in range(len(self.dboards)):
                 self._fp_gpio_srcs.append("RF{}".format(chan_idx))
         else:
@@ -519,7 +520,15 @@ class n3xx(ZynqComponents, PeriphManagerBase):
         return self._clock_source
 
     def set_clock_source(self, *args):
-        " Sets a new reference clock source "
+        """Set a new reference clock source (e.g., 10 MHz source).
+
+        This will call set_sync_source() with the requested clock source and the
+        current time source. If the combination is invalid, the time source
+        is coerced to a value that works with the requested clock source, and a
+        warning is issued (e.g., if the requested clock source is 'gpsdo' and
+        the current time source is 'external', the time source will be coerced to
+        'gpsdo').
+        """
         clock_source = args[0]
         time_source = self._time_source
         assert clock_source is not None
@@ -531,10 +540,11 @@ class n3xx(ZynqComponents, PeriphManagerBase):
                 time_source = 'external'
             elif clock_source == 'gpsdo':
                 time_source = 'gpsdo'
-        source = {"clock_source": clock_source,
-                  "time_source": time_source
-                 }
-        self.set_sync_source(source)
+            self.log.warning(
+                f"Time source '{self.get_time_source()}' is an invalid selection with "
+                f"clock source '{clock_source}'. "
+                f"Coercing time source to '{time_source}'")
+        self.set_sync_source({"time_source": time_source, "clock_source": clock_source})
 
     def get_time_sources(self):
         " Returns list of valid time sources "
@@ -547,7 +557,15 @@ class n3xx(ZynqComponents, PeriphManagerBase):
         return self._time_source
 
     def set_time_source(self, time_source):
-        " Set a time source "
+        """Set a time source (PPS source).
+
+        This will call set_sync_source() with the given time_source and the
+        current clock source. If the combination is invalid, the clock source
+        is coerced to a value that works with the requested time source, and a
+        warning is issued (e.g., if the requested time source is 'sfp0' and
+        the current clock source is 'external', the time source will be coerced to
+        'internal').
+        """
         clock_source = self._clock_source
         assert clock_source is not None
         assert time_source is not None
@@ -560,10 +578,10 @@ class n3xx(ZynqComponents, PeriphManagerBase):
                 clock_source = 'external'
             elif time_source == 'gpsdo':
                 clock_source = 'gpsdo'
-        source = {"time_source": time_source,
-                  "clock_source": clock_source
-                 }
-        self.set_sync_source(source)
+            self.log.warning(
+                f"Clock source '{self.get_clock_source()}' is an invalid selection with "
+                f"time source '{time_source}'. Coercing clock source to '{clock_source}'")
+        self.set_sync_source({"time_source": time_source, "clock_source": clock_source})
 
     def get_sync_sources(self):
         """
@@ -587,7 +605,10 @@ class n3xx(ZynqComponents, PeriphManagerBase):
         assert time_source in self.get_time_sources(), \
                 "`{}' is not a valid time source, valid choices are: {}".format(
                     clock_source, ",".join(self.get_clock_sources()))
-        if (clock_source == self._clock_source) and (time_source == self._time_source):
+        # Check if clock or time source has changed. If they have not, and no
+        # forced reinitialization was set, do nothing.
+        if (clock_source == self._clock_source) and (time_source == self._time_source) \
+            and not bool(args.get("force_reinit", False)):
             # Nothing changed, no need to do anything
             self.log.trace("New sync source assignment matches"
                            "previous assignment. Ignoring update command.")
@@ -739,13 +760,17 @@ class n3xx(ZynqComponents, PeriphManagerBase):
         """
         assert bank in self.get_gpio_banks(), "Invalid GPIO bank: {}".format(bank)
         gpio_master_reg = self.mboard_regs_control.get_fp_gpio_master()
+        gpio_user_mux_reg = self.mboard_regs_control.get_fp_gpio_user_mux()
         gpio_radio_src_reg = self.mboard_regs_control.get_fp_gpio_radio_src()
         def get_gpio_src_i(gpio_pin_index):
             """
             Return the current radio source given a pin index.
             """
             if gpio_master_reg & (1 << gpio_pin_index):
-                return N3XX_GPIO_SRC_PS
+                if gpio_user_mux_reg & (1 << gpio_pin_index):
+                    return N3XX_GPIO_SRC_USER_APP
+                else:
+                    return N3XX_GPIO_SRC_PS
             radio_src = (gpio_radio_src_reg >> (2 * gpio_pin_index)) & 0b11
             return "RF{}".format(radio_src)
         return [get_gpio_src_i(i) for i in range(N3XX_FPGPIO_WIDTH)]
@@ -758,22 +783,29 @@ class n3xx(ZynqComponents, PeriphManagerBase):
         assert len(src) == N3XX_FPGPIO_WIDTH, \
             "Invalid number of GPIO sources!"
         gpio_master_reg = 0x000
+        gpio_user_mux_reg = 0x000
         gpio_radio_src_reg = self.mboard_regs_control.get_fp_gpio_radio_src()
         for src_index, src_name in enumerate(src):
             if src_name not in self.get_gpio_srcs(bank):
                 raise RuntimeError(
-                    "Invalid GPIO source name `{}' at bit position {}!"
-                    .format(src_name, src_index))
-            gpio_master_flag = (src_name == N3XX_GPIO_SRC_PS)
-            gpio_master_reg = gpio_master_reg | (gpio_master_flag << src_index)
+                    "Invalid GPIO source name `{}' at bit position {}!".format(src_name, src_index)
+                )
+            gpio_master_flag = src_name in [N3XX_GPIO_SRC_PS, N3XX_GPIO_SRC_USER_APP]
+            gpio_master_reg |= gpio_master_flag << src_index
+            if src_name == N3XX_GPIO_SRC_USER_APP:
+                gpio_user_mux_reg |= 1 << src_index
             if gpio_master_flag:
                 continue
             # If PS is not the master, we also need to update the radio source:
             radio_index = int(src_name[2:]) & 0b11
-            gpio_radio_src_reg = gpio_radio_src_reg | (radio_index << (2*src_index))
-        self.log.trace("Updating GPIO source: master==0x{:03X} radio_src={:06X}"
-                       .format(gpio_master_reg, gpio_radio_src_reg))
+            gpio_radio_src_reg = gpio_radio_src_reg | (radio_index << (2 * src_index))
+        self.log.trace(
+            "Setting GPIO bank {} to source {}: master=0x{:02X} user_mux=0x{:02X} radio_src=0x{:04X}".format(
+                bank, src, gpio_master_reg, gpio_user_mux_reg, gpio_radio_src_reg
+            )
+        )
         self.mboard_regs_control.set_fp_gpio_master(gpio_master_reg)
+        self.mboard_regs_control.set_fp_gpio_user_mux(gpio_user_mux_reg)
         self.mboard_regs_control.set_fp_gpio_radio_src(gpio_radio_src_reg)
 
     ###########################################################################

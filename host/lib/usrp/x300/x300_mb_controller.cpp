@@ -44,6 +44,7 @@ constexpr char LOG_ID[] = "X300::MB_CTRL";
 constexpr char GPIO_SRC_BANK[]     = "FP0";
 constexpr char GPIO_SRC_RFA[]      = "RFA";
 constexpr char GPIO_SRC_RFB[]      = "RFB";
+constexpr char GPIO_SRC_USER[]     = "USER_APP";
 constexpr size_t GPIO_SRC_NUM_PINS = 12;
 
 } // namespace
@@ -375,8 +376,16 @@ sensor_value_t x300_mb_controller::get_sensor(const std::string& name)
     if (name == "ref_locked") {
         return sensor_value_t("Ref", get_ref_locked(), "locked", "unlocked");
     }
-    // There are only GPS sensors and ref_locked, so we can take a shortcut here
-    // and directly ask the GPS for its sensor value:
+    if (name == "temp_fpga") {
+        // FPGA XADC Code is a 12-bit value
+        uint32_t fpga_temp_adc_code =
+            _zpu_ctrl->peek32(SR_ADDR(SET0_BASE, ZPU_RB_XADC_VALS)) & 0xFFF;
+        // Formula for conversion taken from AMD UG480 Equation 1-2.
+        double temp_degC = ((fpga_temp_adc_code * 503.975) / 4096.0) - 273.15;
+        return sensor_value_t("FPGA TEMP", temp_degC, "C");
+    }
+    // There are only GPS sensors, temp_fpga, and ref_locked, so we can take a shortcut
+    // here and directly ask the GPS for its sensor value:
     if (_sensors.count(name)) {
         return _gps->get_sensor(name);
     }
@@ -504,7 +513,7 @@ std::vector<std::string> x300_mb_controller::get_gpio_srcs(const std::string& ba
                                          << GPIO_SRC_BANK);
         throw uhd::runtime_error(std::string("Invalid GPIO source bank: ") + bank);
     }
-    return {GPIO_SRC_RFA, GPIO_SRC_RFB};
+    return {GPIO_SRC_RFA, GPIO_SRC_RFB, GPIO_SRC_USER};
 }
 
 std::vector<std::string> x300_mb_controller::get_gpio_src(const std::string& bank)
@@ -518,14 +527,13 @@ std::vector<std::string> x300_mb_controller::get_gpio_src(const std::string& ban
     uint32_t fp_gpio_src = _zpu_ctrl->peek32(SR_ADDR(SET0_BASE, ZPU_RB_FP_GPIO_SRC));
     const auto gpio_srcs = get_gpio_srcs(bank);
     std::vector<std::string> gpio_src;
-    for (size_t ii = 0; ii < GPIO_SRC_NUM_PINS; ++ii) {
-        const uint32_t this_src = (fp_gpio_src >> (2 * ii)) & 0x3;
-        if (this_src > 1) {
-            UHD_LOG_WARNING(LOG_ID,
-                "get_gpio_src() read back invalid GPIO source index: "
-                    << this_src << ". Falling back to " << (this_src & 0x1));
+    for (size_t pin = 0; pin < GPIO_SRC_NUM_PINS; ++pin) {
+        uint32_t this_src = (fp_gpio_src >> (2 * pin)) & 0x3;
+        if (this_src == 0b11) {
+            // 0b11 -> cast to 0b10 (GPIO_SRC_USER)
+            this_src = 0b10;
         }
-        gpio_src.push_back(gpio_srcs[this_src & 0x1]);
+        gpio_src.push_back(gpio_srcs[this_src]);
     }
     return gpio_src;
 }
@@ -536,25 +544,27 @@ void x300_mb_controller::set_gpio_src(
     if (srcs.size() > GPIO_SRC_NUM_PINS) {
         UHD_LOG_WARNING(LOG_ID, "set_gpio_src(): Provided more sources than pins!");
     }
-    uint32_t fp_gpio_src   = _zpu_ctrl->peek32(SR_ADDR(SET0_BASE, ZPU_RB_FP_GPIO_SRC));
-    size_t pins_configured = 0;
+    uint32_t fp_gpio_src = _zpu_ctrl->peek32(SR_ADDR(SET0_BASE, ZPU_RB_FP_GPIO_SRC));
+    size_t pin           = 0;
 
     const auto gpio_srcs = get_gpio_srcs(bank);
     for (auto src : srcs) {
         const uint32_t pins = [src]() {
             if (src == GPIO_SRC_RFA) {
-                return 0;
+                return 0b00;
+            } else if (src == GPIO_SRC_RFB) {
+                return 0b01;
+            } else if (src == GPIO_SRC_USER) {
+                return 0b10;
+            } else {
+                UHD_LOG_THROW(
+                    uhd::runtime_error, LOG_ID, "Invalid GPIO source provided: " << src);
             }
-            if (src == GPIO_SRC_RFB) {
-                return 1;
-            }
-            UHD_LOG_ERROR(LOG_ID, "Invalid GPIO source provided: " << src);
-            throw uhd::runtime_error("Invalid GPIO source provided!");
         }();
-        uint32_t pin_mask = ~(uint32_t(0x3) << (2 * pins_configured));
-        fp_gpio_src       = (fp_gpio_src & pin_mask) | (pins << 2 * pins_configured);
-        pins_configured++;
-        if (pins_configured > GPIO_SRC_NUM_PINS) {
+        uint32_t pin_mask = ~(uint32_t(0x3) << (2 * pin));
+        fp_gpio_src       = (fp_gpio_src & pin_mask) | (pins << 2 * pin);
+        pin++;
+        if (pin > GPIO_SRC_NUM_PINS) {
             break;
         }
     }
@@ -586,6 +596,9 @@ void x300_mb_controller::init_gps()
         if (_gps and _gps->gps_detected()) {
             auto sensors = _gps->get_sensors();
             _sensors.insert(sensors.cbegin(), sensors.cend());
+
+            _gps_iface = std::make_shared<x300_mb_controller::gps_iface>(_gps);
+            register_feature(_gps_iface);
         } else {
             UHD_LOG_TRACE("X300::MB_CTRL",
                 "No GPS found, setting register to save time on next run.");

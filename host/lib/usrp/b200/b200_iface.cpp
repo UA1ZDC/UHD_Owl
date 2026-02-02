@@ -12,12 +12,12 @@
 #include <uhdlib/utils/ihex.hpp>
 #include <libusb.h>
 #include <stdint.h>
-#include <boost/filesystem.hpp>
 #include <boost/format.hpp>
 #include <boost/functional/hash.hpp>
 #include <boost/lexical_cast.hpp>
 #include <chrono>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -40,8 +40,10 @@ const static uint8_t FX3_FIRMWARE_LOAD = 0xA0;
 // 32 KB - 256 bytes for EEPROM storage
 constexpr size_t BOOTLOADER_MAX_SIZE = 32512;
 
-const static uint8_t VRT_VENDOR_OUT = (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_OUT);
-const static uint8_t VRT_VENDOR_IN  = (LIBUSB_REQUEST_TYPE_VENDOR | LIBUSB_ENDPOINT_IN);
+const static uint8_t VRT_VENDOR_OUT = static_cast<uint8_t>(LIBUSB_REQUEST_TYPE_VENDOR)
+                                      | static_cast<uint8_t>(LIBUSB_ENDPOINT_OUT);
+const static uint8_t VRT_VENDOR_IN = static_cast<uint8_t>(LIBUSB_REQUEST_TYPE_VENDOR)
+                                     | static_cast<uint8_t>(LIBUSB_ENDPOINT_IN);
 const static uint8_t B200_VREQ_FPGA_START    = 0x02;
 const static uint8_t B200_VREQ_FPGA_DATA     = 0x12;
 const static uint8_t B200_VREQ_GET_COMPAT    = 0x15;
@@ -480,8 +482,8 @@ public:
 
     size_t _get_file_size(const char* filename)
     {
-        boost::filesystem::path path(filename);
-        auto filesize = boost::filesystem::file_size(path);
+        std::filesystem::path path(filename);
+        auto filesize = std::filesystem::file_size(path);
         return static_cast<size_t>(filesize);
     }
 

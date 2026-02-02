@@ -23,6 +23,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/format.hpp>
 #include <chrono>
+#include <cmath>
 #include <functional>
 #include <map>
 #include <memory>
@@ -289,18 +290,24 @@ public:
         _tx_target_pfd_freq = pfd_freq_max;
         if (_rev >= 1) {
             bool can_set_clock_rate = true;
-            // set dboard clock rates to as close to the max PFD freq as possible
+            // set dboard clock rates to as close to the max PFD freq as possible while
+            // making sure the master clock rate is integer-divisible by the chosen rate.
             if (_iface->get_clock_rate(dboard_iface::UNIT_RX) > pfd_freq_max) {
                 std::vector<double> rates =
                     _iface->get_clock_rates(dboard_iface::UNIT_RX);
-                double highest_rate = 0.0;
+                double master_clock_rate = _iface->get_codec_rate(dboard_iface::UNIT_RX);
+                double highest_rate      = 0.0;
                 for (double rate : rates) {
-                    if (rate <= pfd_freq_max and rate > highest_rate)
+                    if (rate <= pfd_freq_max and rate > highest_rate
+                        and uhd::math::fp_compare::freq_compare_epsilon(
+                                std::fmod(master_clock_rate, rate))
+                                == 0.0)
                         highest_rate = rate;
                 }
                 try {
                     _iface->set_clock_rate(dboard_iface::UNIT_RX, highest_rate);
-                } catch (const uhd::not_implemented_error&) {
+                    _iface->lock_clock_rate(dboard_iface::UNIT_RX);
+                } catch (const uhd::runtime_error&) {
                     UHD_LOG_WARNING(
                         "UBX", "Unable to set dboard clock rate - phase will vary");
                     can_set_clock_rate = false;
@@ -311,14 +318,19 @@ public:
                 and _iface->get_clock_rate(dboard_iface::UNIT_TX) > pfd_freq_max) {
                 std::vector<double> rates =
                     _iface->get_clock_rates(dboard_iface::UNIT_TX);
-                double highest_rate = 0.0;
+                double master_clock_rate = _iface->get_codec_rate(dboard_iface::UNIT_TX);
+                double highest_rate      = 0.0;
                 for (double rate : rates) {
-                    if (rate <= pfd_freq_max and rate > highest_rate)
+                    if (rate <= pfd_freq_max and rate > highest_rate
+                        and uhd::math::fp_compare::freq_compare_epsilon(
+                                std::fmod(master_clock_rate, rate))
+                                == 0.0)
                         highest_rate = rate;
                 }
                 try {
                     _iface->set_clock_rate(dboard_iface::UNIT_TX, highest_rate);
-                } catch (const uhd::not_implemented_error&) {
+                    _iface->lock_clock_rate(dboard_iface::UNIT_TX);
+                } catch (const uhd::runtime_error&) {
                     UHD_LOG_WARNING(
                         "UBX", "Unable to set dboard clock rate - phase will vary");
                 }
@@ -511,10 +523,18 @@ public:
         get_tx_subtree()->create<std::string>("connection").set("QI");
         get_tx_subtree()->create<bool>("enabled").set(true); // always enabled
         get_tx_subtree()->create<bool>("use_lo_offset").set(false);
-        get_tx_subtree()->create<double>("bandwidth/value").set(bw);
         get_tx_subtree()
             ->create<meta_range_t>("bandwidth/range")
             .set(freq_range_t(bw, bw));
+        get_tx_subtree()
+            ->create<double>("bandwidth/value")
+            .set_coercer([this](const double bandwidth) {
+                return get_tx_subtree()
+                    ->access<meta_range_t>("bandwidth/range")
+                    .get()
+                    .clip(bandwidth);
+            })
+            .set(bw);
         get_tx_subtree()
             ->create<int64_t>("sync_delay")
             .add_coerced_subscriber(
@@ -563,10 +583,18 @@ public:
         get_rx_subtree()->create<std::string>("connection").set("IQ");
         get_rx_subtree()->create<bool>("enabled").set(true); // always enabled
         get_rx_subtree()->create<bool>("use_lo_offset").set(false);
-        get_rx_subtree()->create<double>("bandwidth/value").set(bw);
         get_rx_subtree()
             ->create<meta_range_t>("bandwidth/range")
             .set(freq_range_t(bw, bw));
+        get_rx_subtree()
+            ->create<double>("bandwidth/value")
+            .set_coercer([this](const double bandwidth) {
+                return get_rx_subtree()
+                    ->access<meta_range_t>("bandwidth/range")
+                    .get()
+                    .clip(bandwidth);
+            })
+            .set(bw);
         get_rx_subtree()
             ->create<int64_t>("sync_delay")
             .add_coerced_subscriber(

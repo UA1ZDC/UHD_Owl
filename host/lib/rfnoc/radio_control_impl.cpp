@@ -5,29 +5,42 @@
 //
 
 #include <uhd/exception.hpp>
+#include <uhd/features/complex_gain_iface.hpp>
 #include <uhd/rfnoc/mb_controller.hpp>
 #include <uhd/rfnoc/multichan_register_iface.hpp>
 #include <uhd/rfnoc/register_iface.hpp>
+#include <uhd/utils/compat_check.hpp>
 #include <uhd/utils/log.hpp>
-#include <uhd/utils/math.hpp>
 #include <uhdlib/rfnoc/radio_control_impl.hpp>
-#include <uhdlib/utils/compat_check.hpp>
 #include <map>
+#include <numeric>
 #include <tuple>
 
+
+// Forward-declare factories for complex gain
+namespace uhd { namespace features {
+
+tx_complex_gain_iface::sptr make_tx_complex_gain_iface(
+    uhd::rfnoc::multichan_register_iface& regs,
+    const size_t base,
+    const double tick_rate,
+    const size_t nipc);
+
+rx_complex_gain_iface::sptr make_rx_complex_gain_iface(
+    uhd::rfnoc::multichan_register_iface& regs,
+    const size_t base,
+    const double tick_rate,
+    const size_t nipc);
+
+}} // namespace uhd::features
+
 using namespace uhd::rfnoc;
-
-namespace {
-
-const std::string DEFAULT_GAIN_PROFILE("default");
-
-} // namespace
 
 const std::string radio_control::ALL_LOS   = "all";
 const std::string radio_control::ALL_GAINS = "";
 
-const uint16_t radio_control_impl::MAJOR_COMPAT = 0;
-const uint16_t radio_control_impl::MINOR_COMPAT = 1;
+const uint16_t radio_control_impl::MAJOR_COMPAT = 1;
+const uint16_t radio_control_impl::MINOR_COMPAT = 0;
 
 const uhd::fs_path radio_control_impl::DB_PATH("dboard");
 const uhd::fs_path radio_control_impl::FE_PATH("frontends");
@@ -107,8 +120,28 @@ radio_control_impl::radio_control_impl(make_args_ptr make_args)
                 RFNOC_LOG_WARNING("Received stream command to invalid output port!");
                 return;
             }
-            post_action({res_source_info::OUTPUT_EDGE, port}, stream_cmd_action);
+            post_action({res_source_info::OUTPUT_EDGE, port},
+                stream_cmd_action,
+                action_mode_t::ASYNC);
         });
+
+    register_action_handler(ACTION_KEY_TUNE_REQUEST,
+        [this](const res_source_info& src, action_info::sptr action) {
+            tune_request_action_info::sptr tune_request_action =
+                std::dynamic_pointer_cast<tune_request_action_info>(action);
+
+            if (!tune_request_action) {
+                RFNOC_LOG_WARNING("Received invalid Tune request command!");
+                return;
+            }
+            const size_t port = src.instance;
+            if (port >= get_num_output_ports()) {
+                RFNOC_LOG_WARNING("Received tune_request to invalid output port!");
+                return;
+            }
+            _tune_request_action_handler(tune_request_action, src);
+        });
+
     // Register spp properties and resolvers
     _spp_prop.reserve(get_num_output_ports());
     _atomic_item_size_in.reserve(get_num_input_ports());
@@ -161,7 +194,7 @@ radio_control_impl::radio_control_impl(make_args_ptr make_args)
             {&_atomic_item_size_in.back()},
             [this, chan, &ais_in = _atomic_item_size_in.back()]() {
                 RFNOC_LOG_TRACE("Calling resolver for atomic_item_size in@" << chan);
-                ais_in = uhd::math::lcm<size_t>(ais_in, get_atomic_item_size());
+                ais_in = std::lcm<size_t>(ais_in, get_atomic_item_size());
                 ais_in = std::min<size_t>(
                     ais_in, get_mtu({res_source_info::INPUT_EDGE, chan}));
                 if ((ais_in % get_atomic_item_size()) > 0) {
@@ -174,7 +207,7 @@ radio_control_impl::radio_control_impl(make_args_ptr make_args)
             {&_atomic_item_size_out.back()},
             [this, chan, &ais_out = _atomic_item_size_out.back()]() {
                 RFNOC_LOG_TRACE("Calling resolver for atomic_item_size out@" << chan);
-                ais_out = uhd::math::lcm<size_t>(ais_out, get_atomic_item_size());
+                ais_out = std::lcm<size_t>(ais_out, get_atomic_item_size());
                 ais_out = std::min<size_t>(
                     ais_out, get_mtu({res_source_info::OUTPUT_EDGE, chan}));
                 if ((ais_out % get_atomic_item_size()) > 0) {
@@ -193,7 +226,7 @@ radio_control_impl::radio_control_impl(make_args_ptr make_args)
                 RFNOC_LOG_TRACE("Calling resolver for spp@" << chan);
                 const size_t max_pyld =
                     get_max_payload_size({res_source_info::OUTPUT_EDGE, chan});
-                const int max_spp = get_max_spp(max_pyld);
+                const int max_spp = get_max_spp(max_pyld - max_pyld % ais_out.get());
                 if (spp.get() > max_spp) {
                     RFNOC_LOG_DEBUG("spp value "
                                     << spp.get() << " exceeds MTU of "
@@ -235,7 +268,8 @@ radio_control_impl::radio_control_impl(make_args_ptr make_args)
                 chan,
                 &samp_rate_in  = _samp_rate_in.at(chan),
                 &samp_rate_out = _samp_rate_out.at(chan)]() {
-                RFNOC_LOG_TRACE("Calling resolver for samp_rate@" << chan);
+                UHD_LOGGER_TRACE(this->get_unique_id())
+                    << "Calling resolver for samp_rate@" << chan;
                 samp_rate_in  = coerce_rate(samp_rate_in.get());
                 samp_rate_out = samp_rate_in.get();
             });
@@ -294,6 +328,23 @@ radio_control_impl::radio_control_impl(make_args_ptr make_args)
     // Set the default gain profiles
     _rx_gain_profile_api = std::make_shared<rf_control::default_gain_profile>();
     _tx_gain_profile_api = std::make_shared<rf_control::default_gain_profile>();
+
+    // Create complex gain APIs, if available
+    const uint32_t feature_reg = _radio_reg_iface.peek32(regmap::REG_FEATURES_PRESENT);
+
+    double tick_rate = get_tick_rate();
+
+    if (feature_reg & regmap::FEATURE_TX_CGAIN) {
+        RFNOC_LOG_TRACE("Enabling TX complex gain feature.");
+        register_feature(uhd::features::make_tx_complex_gain_iface(
+            _radio_reg_iface, regmap::REG_TX_CGAIN_BASE, tick_rate, get_spc()));
+    }
+    if (feature_reg & regmap::FEATURE_RX_CGAIN) {
+        RFNOC_LOG_TRACE("Enabling RX complex gain feature.");
+        register_feature(uhd::features::make_rx_complex_gain_iface(
+            _radio_reg_iface, regmap::REG_RX_CGAIN_BASE, tick_rate, get_spc()));
+    }
+
 } /* ctor */
 
 /******************************************************************************
@@ -719,6 +770,86 @@ uhd::meta_range_t radio_control_impl::get_tx_power_range(const size_t chan)
     return _tx_pwr_mgr.at(chan)->get_power_range();
 }
 
+static uhd::meta_range_t make_overall_tune_range(const uhd::meta_range_t& fe_range,
+    const uhd::meta_range_t& dsp_range,
+    const double bw)
+{
+    uhd::meta_range_t range;
+    for (const uhd::range_t& sub_range : fe_range) {
+        range.push_back(uhd::range_t(
+            std::max(0.0, sub_range.start() + std::max(dsp_range.start(), -bw / 2)),
+            sub_range.stop() + std::min(dsp_range.stop(), bw / 2),
+            dsp_range.step()));
+    }
+    return range;
+}
+
+void radio_control_impl::apply_and_update_tune_request(
+    tune_request_action_info::sptr tune_request_action,
+    std::function<void(double)> set_rf_freq,
+    std::function<double()> get_rf_freq)
+{
+    uhd::tune_request_t tune_request = tune_request_action->tune_request;
+    const double clipped_requested_freq =
+        tune_request_action->overall_freq_range.clip(tune_request.target_freq);
+
+    RFNOC_LOG_TRACE(str(boost::format("Frequency Range %.3fMHz->%.3fMHz")
+                        % (tune_request_action->overall_freq_range.start() / 1e6)
+                        % (tune_request_action->overall_freq_range.stop() / 1e6)));
+
+    RFNOC_LOG_TRACE(str(boost::format("Clipped frequency requested: %.3fMHz")
+                        % (clipped_requested_freq / 1e6)));
+
+    //------------------------------------------------------------------
+    //-- set the RF frequency depending upon the policy
+    //------------------------------------------------------------------
+    double target_rf_freq = 0.0;
+    switch (tune_request.rf_freq_policy) {
+        case uhd::tune_request_t::POLICY_AUTO:
+            target_rf_freq = clipped_requested_freq;
+            break;
+
+        case uhd::tune_request_t::POLICY_MANUAL:
+            if ((tune_request.dsp_freq_policy == uhd::tune_request_t::POLICY_AUTO)
+                && (tune_request_action->dsp_range.size() == 1)
+                && tune_request_action->dsp_range.stop() == 0) {
+                /* Hardware does not incl. DSP chain
+                 * (dsp_freq_range only has single item, with value 0),
+                 * requested dsp frequency will be combined with rf frequency.
+                 * The case to handle uses MANUAL rf_freq_policy and
+                 * AUTOMATIC dsp_freq_policy */
+                RFNOC_LOG_DEBUG(
+                    str(boost::format("No DSP capabilities detected. Combining offset "
+                                      "into target frequency of %.3fMHz")
+                        % (clipped_requested_freq / 1e6)));
+
+                target_rf_freq = clipped_requested_freq;
+            } else {
+                /* Normal manual mode observing individual tune requests*/
+                target_rf_freq = tune_request_action->rf_range.clip(tune_request.rf_freq);
+            }
+
+        case uhd::tune_request_t::POLICY_NONE:
+            break;
+    }
+    RFNOC_LOG_TRACE(
+        str(boost::format("Target RF Freq: %.3fMHz") % (target_rf_freq / 1e6)));
+
+    //------------------------------------------------------------------
+    //-- Tune the RF frontend
+    //------------------------------------------------------------------
+    if (tune_request.rf_freq_policy != uhd::tune_request_t::POLICY_NONE) {
+        set_rf_freq(target_rf_freq);
+    }
+    const double actual_rf_freq = get_rf_freq();
+
+    RFNOC_LOG_TRACE(
+        str(boost::format("RADIO Actual RF Freq: %.3fMHz") % (actual_rf_freq / 1e6)));
+
+    tune_request_action->tune_result.clipped_rf_freq = clipped_requested_freq;
+    tune_request_action->tune_result.target_rf_freq  = target_rf_freq;
+    tune_request_action->tune_result.actual_rf_freq  = actual_rf_freq;
+}
 
 /******************************************************************************
  * LO Default API
@@ -947,12 +1078,9 @@ void radio_control_impl::issue_stream_cmd(
             {stream_cmd_t::STREAM_MODE_STOP_CONTINUOUS, regmap::RX_CMD_STOP},
             {stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_DONE, regmap::RX_CMD_FINITE},
             {stream_cmd_t::STREAM_MODE_NUM_SAMPS_AND_MORE, regmap::RX_CMD_FINITE}};
-    const uint32_t cmd_bits = stream_mode_to_cmd_word.at(stream_cmd.stream_mode);
-    const uint32_t cmd_word =
-        cmd_bits
-        | (uint32_t((stream_cmd.stream_now) ? 0 : 1) << regmap::RX_CMD_TIMED_POS);
+    uint32_t cmd_word = stream_mode_to_cmd_word.at(stream_cmd.stream_mode);
 
-    if (cmd_bits == regmap::RX_CMD_FINITE) {
+    if (cmd_word == regmap::RX_CMD_FINITE) {
         if (stream_cmd.num_samps == 0) {
             RFNOC_LOG_WARNING("Ignoring stream command for finite acquisition of "
                               "zero samples");
@@ -986,9 +1114,21 @@ void radio_control_impl::issue_stream_cmd(
             regmap::REG_RX_CMD_NUM_WORDS_LO, uint32_t(num_words & 0xFFFFFFFF), chan);
     }
     if (!stream_cmd.stream_now) {
-        const uint64_t ticks = stream_cmd.time_spec.to_ticks(get_tick_rate());
-        _radio_reg_iface.poke32(regmap::REG_RX_CMD_TIME_HI, uint32_t(ticks >> 32), chan);
-        _radio_reg_iface.poke32(regmap::REG_RX_CMD_TIME_LO, uint32_t(ticks >> 0), chan);
+        switch (stream_cmd.trigger) {
+            case stream_cmd_t::trigger_t::TIMED: {
+                const uint64_t ticks = stream_cmd.time_spec.to_ticks(get_tick_rate());
+                _radio_reg_iface.poke32(
+                    regmap::REG_RX_CMD_TIME_HI, uint32_t(ticks >> 32), chan);
+                _radio_reg_iface.poke32(
+                    regmap::REG_RX_CMD_TIME_LO, uint32_t(ticks >> 0), chan);
+                cmd_word |= 1 << regmap::RX_CMD_TIMED_POS;
+                break;
+            }
+            case stream_cmd_t::trigger_t::TX_RUNNING: {
+                cmd_word |= 1 << regmap::RX_CMD_TRIG_POS;
+                break;
+            }
+        }
     }
     _radio_reg_iface.poke32(regmap::REG_RX_CMD, cmd_word, chan);
 }
@@ -996,6 +1136,67 @@ void radio_control_impl::issue_stream_cmd(
 void radio_control_impl::enable_rx_timestamps(const bool enable, const size_t chan)
 {
     _radio_reg_iface.poke32(regmap::REG_RX_HAS_TIME, enable ? 0x1 : 0x0, chan);
+}
+
+/****************************************************************************
+ * Tune Request API
+ ***************************************************************************/
+void radio_control_impl::_tune_request_action_handler(
+    tune_request_action_info::sptr tune_request_action, const res_source_info& src)
+{
+    RFNOC_LOG_TRACE("Received tune request on " << src.to_string());
+
+    res_source_info dst_edge{res_source_info::invert_edge(src.type), src.instance};
+    const size_t chan = src.instance;
+    freq_range_t tune_range_nonmono;
+    uhd::tune_request_t tune_request = tune_request_action->tune_request;
+
+    if (src.type == res_source_info::OUTPUT_EDGE) {
+        set_rx_tune_args(tune_request.args, chan);
+
+        tune_range_nonmono = (tune_request_action->dsp_range.empty())
+                                 ? get_rx_frequency_range(chan)
+                                 : make_overall_tune_range(get_rx_frequency_range(chan),
+                                     tune_request_action->dsp_range,
+                                     get_rx_bandwidth(chan));
+
+        tune_request_action->overall_freq_range = tune_range_nonmono.as_monotonic();
+        tune_request_action->rf_range           = get_rx_frequency_range(chan);
+
+        auto set_rf_freq = [this, chan](double freq) { set_rx_frequency(freq, chan); };
+        auto get_rf_freq = [this, chan]() { return get_rx_frequency(chan); };
+
+        apply_and_update_tune_request(tune_request_action, set_rf_freq, get_rf_freq);
+
+    } else if (src.type == res_source_info::INPUT_EDGE) {
+        set_tx_tune_args(tune_request.args, chan);
+
+        tune_range_nonmono = (tune_request_action->dsp_range.empty())
+                                 ? get_tx_frequency_range(chan)
+                                 : make_overall_tune_range(get_tx_frequency_range(chan),
+                                     tune_request_action->dsp_range,
+                                     get_tx_bandwidth(chan));
+
+        tune_request_action->overall_freq_range = tune_range_nonmono.as_monotonic();
+        tune_request_action->rf_range           = get_tx_frequency_range(chan);
+
+        auto set_rf_freq = [this, chan](double freq) { set_tx_frequency(freq, chan); };
+        auto get_rf_freq = [this, chan]() { return get_tx_frequency(chan); };
+
+        apply_and_update_tune_request(tune_request_action, set_rf_freq, get_rf_freq);
+    }
+
+    RFNOC_LOG_TRACE(
+        "Tune_result details radio_control.cpp : target_rf_frq = "
+        << tune_request_action->tune_result.target_rf_freq
+        << " target dsp freq = " << tune_request_action->tune_result.target_dsp_freq
+        << " clipped rf_freq " << tune_request_action->tune_result.clipped_rf_freq
+        << " actual_rf_freq = " << tune_request_action->tune_result.actual_rf_freq
+        << " actual dsp_freq= " << tune_request_action->tune_result.actual_dsp_freq);
+
+    RFNOC_LOG_TRACE("Sending tune_request to " << src.to_string()
+                                               << ", id==" << tune_request_action->id);
+    post_action(src, tune_request_action, action_mode_t::ASYNC);
 }
 
 /******************************************************************************
@@ -1093,7 +1294,8 @@ void radio_control_impl::async_message_handler(
                     auto tx_event_action = tx_event_action_info::make(
                         uhd::async_metadata_t::EVENT_CODE_UNDERFLOW, timestamp);
                     post_action(res_source_info{res_source_info::INPUT_EDGE, chan},
-                        tx_event_action);
+                        tx_event_action,
+                        action_mode_t::ASYNC);
                     UHD_LOG_FASTPATH("U");
                     RFNOC_LOG_TRACE("Posting underrun event action message.");
                     break;
@@ -1102,7 +1304,8 @@ void radio_control_impl::async_message_handler(
                     auto tx_event_action = tx_event_action_info::make(
                         uhd::async_metadata_t::EVENT_CODE_TIME_ERROR, timestamp);
                     post_action(res_source_info{res_source_info::INPUT_EDGE, chan},
-                        tx_event_action);
+                        tx_event_action,
+                        action_mode_t::ASYNC);
                     UHD_LOG_FASTPATH("L");
                     RFNOC_LOG_TRACE("Posting late data event action message.");
                     break;
@@ -1111,7 +1314,8 @@ void radio_control_impl::async_message_handler(
                     auto tx_event_action = tx_event_action_info::make(
                         uhd::async_metadata_t::EVENT_CODE_BURST_ACK, timestamp);
                     post_action(res_source_info{res_source_info::INPUT_EDGE, chan},
-                        tx_event_action);
+                        tx_event_action,
+                        action_mode_t::ASYNC);
                     RFNOC_LOG_TRACE("Posting burst ack event action message.");
                     break;
                 }
@@ -1134,7 +1338,8 @@ void radio_control_impl::async_message_handler(
                     rx_event_action->args["cont_mode"] = std::to_string(cont_mode);
                     RFNOC_LOG_TRACE("Posting overrun event action message.");
                     post_action(res_source_info{res_source_info::OUTPUT_EDGE, chan},
-                        rx_event_action);
+                        rx_event_action,
+                        action_mode_t::ASYNC);
                     break;
                 }
                 case err_codes::ERR_RX_LATE_CMD:
@@ -1143,7 +1348,8 @@ void radio_control_impl::async_message_handler(
                         uhd::rx_metadata_t::ERROR_CODE_LATE_COMMAND);
                     RFNOC_LOG_TRACE("Posting RX late command message.");
                     post_action(res_source_info{res_source_info::OUTPUT_EDGE, chan},
-                        rx_event_action);
+                        rx_event_action,
+                        action_mode_t::ASYNC);
                     break;
             }
             break;

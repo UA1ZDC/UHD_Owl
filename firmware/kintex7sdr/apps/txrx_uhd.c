@@ -335,10 +335,13 @@ main(void)
 #ifdef BOOTLOADER
   //load the production FPGA image or firmware if appropriate
   do_the_bootload_thing();
-#endif
-
   //if we get here we've fallen through to safe firmware
+  //H3 fix: eth_addrs_set_default() must be bootloader/safe-mode ONLY. Keeping it
+  //here (inside #ifdef BOOTLOADER) means the production app leaves the EEPROM-read
+  //MAC/IP intact instead of clobbering it with the hardcoded default (192.168.10.2).
+  //This matches upstream usrp2/apps/txrx_uhd.c.
   eth_addrs_set_default();
+#endif
 
   print_mac_addr(ethernet_mac_addr()); newline();
   print_ip_addr(get_ip_addr()); newline();

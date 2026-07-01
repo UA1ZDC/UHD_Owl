@@ -59,7 +59,7 @@ ADD_LINKER_FLAGS("-Wl,--relax")
 #ADD_DEFINITIONS(-DHAL_IO_USES_DBOARD_PINS)
 ADD_DEFINITIONS(-DHAL_IO_USES_UART)
 
-OPTION(DEFINE_VERBOSE_PACKET "Show additional verbose packet info" ON)
+OPTION(DEFINE_VERBOSE_PACKET "Show additional verbose packet info" OFF) # default OFF for production (was ON); re-enable with -DDEFINE_VERBOSE_PACKET=ON for debug
 IF(DEFINE_VERBOSE_PACKET)
     message("Showing control and update packets. Disable in production")
     ADD_DEFINITIONS(-DVERBOSE_PACKET=1)
